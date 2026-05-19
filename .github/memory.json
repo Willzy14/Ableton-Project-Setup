@@ -1,0 +1,40 @@
+{
+  "project": {
+    "name": "Ableton Project Setup",
+    "type": "tool",
+    "description": "Automated Ableton Live project builder — takes raw stems, classifies them, detects BPM, and creates a fully laid-out .als file matching Sam's mixing workflow.",
+    "location": "Wired Masters Dropbox/Sam Wills/0.1---GIT HUB---/Ableton Project Setup/",
+    "stack": ["Python", "gzip", "Ableton Live 12.3 ALS format"],
+    "repo_url": ""
+  },
+  "modules": {},
+  "sessions": [
+    {
+      "date": "2026-05-19",
+      "summary": "Project bootstrap — created context files, reviewed ABLETON_INTERACTION.md from Automated DJ Mixes. Waiting for Sam's reference ALS files to analyse his mix layout.",
+      "files_changed": [
+        "Documentation/AI_CONTEXT.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md",
+        ".github/copilot-instructions.md"
+      ],
+      "pending": [
+        "Receive and analyse Sam's reference ALS files",
+        "Define stem classification rules",
+        "Build ALS template and Python patcher"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "date": "2026-05-19",
+      "decision": "ALS files are patched as raw text lines, not via XML libraries.",
+      "why": "Ableton's parser is strict about whitespace, attribute order, and line endings. xml.etree.ElementTree corrupts the format. See ABLETON_INTERACTION.md."
+    },
+    {
+      "date": "2026-05-19",
+      "decision": "Stems are placed unwarped (IsWarped=false). BPM detected from kick/snare sets global tempo.",
+      "why": "Sam's stems arrive pre-rendered at the correct BPM. No time-stretching needed."
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+# Generated test output (rebuildable from stems)
+Test Output/
+
+# Ableton sidecar files
+*.asd
+
+# Temp/working files
+*.tmp.*
+temp_*.xml
+temp_*.als
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

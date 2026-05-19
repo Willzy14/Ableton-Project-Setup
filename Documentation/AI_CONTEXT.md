@@ -1,0 +1,111 @@
+# Ableton Project Setup
+
+## What This Is
+A Python-based tool that takes a folder of raw stems (kicks, snares, bass, vocals, etc.) and automatically creates a fully laid-out Ableton Live project matching Sam's exact mixing workflow — track order, clip colours, groups, BPM, folder structure. Stems arrive with inconsistent naming, so the tool classifies them intelligently. BPM is detected from percussive stems and set as the global tempo. No warping — stems are placed raw.
+
+Part of the samwillsmixing.com ecosystem — speeds up the most repetitive part of starting a new mix.
+
+## Tech Stack
+- Python 3.x
+- gzip (ALS decompression/compression)
+- librosa or similar (BPM detection from audio)
+- Template-based ALS patching (line-level text manipulation, NOT XML parsing)
+- Ableton Live 12.3 format
+
+## Architecture
+```
+Ableton Project Setup/
+  Source/                    # Main Python code
+    als_patcher.py           # Template patching engine
+    stem_classifier.py       # Stem name → track type mapping
+    bpm_detector.py          # BPM detection from audio
+    project_builder.py       # Orchestrator — ties it all together
+  Templates/                 # Reference ALS templates (Sam creates in Ableton)
+  Documentation/             # AI context, specs, mix layout reference
+  .github/                   # Memory, activity log
+```
+
+## How to Run
+Not yet implemented.
+
+## Current State
+**Phase: V1 working end-to-end.** Built and tested with 5 real projects (Ak1ra, Sparks, Jones - Fire In Your Eyes 130bpm, Coldabank - Never Say Sorry 134bpm, Pressure - Lucozade 125bpm). Working end-to-end: classification, BPM detection from kick onsets, multi-clip silence-aware placement, GroupTrack for ref stems, track heights (LaneHeight=17), TrackUnfolded=true on working tracks for inline waveforms.
+
+**Known issues / not yet working**:
+1. **Ref group still opens expanded in Ableton 12.4** despite TrackUnfolded=false on GroupTrack and matching Sam's saved (collapsed) GroupTrack structure exactly. Multiple fix attempts (clearing IsContentSelectedInDocument, rewriting GroupTrack template to canonical 12.4 format) didn't resolve. Low priority — Sam can collapse manually.
+2. **Clip names use simplified display names** (e.g., "DR Kick") instead of original source filenames. Audio files on disk DO keep original names, but the in-Ableton clip label is the display name. Sam wants: TRACK name = simplified display, CLIP name = original filename. Fix in `insert_clip_into_track` — use original stem filename for clip Name, not stem["name"].
+3. **Classifier misses some patterns** discovered in real-world stems:
+   - `BVs` (background vocals) → should map to vocals
+   - `Ref Bounce` → should map to reference
+   - `DRM_TOPS`, `Tops`, `Fills` → should map to drums
+   - `CABASA` → should map to drums (percussion)
+   - `Group` (bus bounces from producer) → currently goes to music, OK behaviour
+
+## What's Next
+1. Fix clip naming — clip Name should be original source filename, not display_name
+2. Add missing classifier patterns (BVs, Tops, Fills, CABASA, Ref Bounce, DRM_*)
+3. Investigate why ref group opens expanded (low priority — Sam can collapse manually)
+4. Possibly: auto-detect BPM as part of build pipeline (currently in detect_bpm.py prototype, not integrated)
+
+## Key Decisions
+- **No XML libraries** — ALS files are patched as raw text lines per ABLETON_INTERACTION.md. `xml.etree.ElementTree` would corrupt the format.
+- **No warping** — all stems placed with `IsWarped="false"`. Stems arrive at the correct BPM.
+- **BPM from percussion** — kick or snare is the most reliable BPM source. Global tempo is set from this.
+- **Template-based approach** — start from a known-good ALS file saved by Ableton, patch in stems dynamically.
+- **Track AND clip colours match** — both set to the same palette index per category (6/24/8/13/55/17/14). Sam's existing projects only had clip colours set, but the tool now sets both for consistency.
+- **Flat reference group** — all stems duplicated into a summing group at the bottom of the project, clips coloured red (14), so Sam can A/B his mix against the original stems.
+- **Session Time track** — always first, has HOFA Project Time plugin, tracks time spent on each project. Must be in every project (comes from template).
+- **Send stems are from producers** — reverb, delay, chorus stems are part of the stem pack, not created by Sam. Tool needs to classify and place them.
+
+## Sam's Mix Layout Spec (Extracted from 100+ Projects)
+
+### Clip Colour Coding (Ableton Palette Index)
+| Index | Category | Keywords |
+|-------|----------|----------|
+| 6 | Drums | kick, snare, hat, clap, perc, shaker, tambourine, cymbal, break, top loop, drum fill, conga |
+| 24 | Bass | bass, sub, 808, bassline, low end |
+| 8 | Music | synth, chord, melody, piano, keys, pad, string, organ, stab, instrument, lead, arp, harp, drone, music, sample |
+| 13 | Vocals | vocal, vox, acapella, voice, singing, lead vx, backing, harmony |
+| 55 | FX | fx, effect, riser, impact, sweep, noise, texture, atmosphere, ambient, vinyl, downlifter |
+| 17 | Sends | reverb, delay, chorus, echo (when provided as stems from the producer) |
+| 14 | Flat reference | used for the summing group at bottom (all stems, reduced level) |
+
+### Track Order
+1. **Session Time** — always first, track color 27, HOFA Project Time plugin, no audio
+2. **Kick** — standalone, never grouped, clip color 6
+3. **Drums** — hats, snares, claps, perc — grouped when multiple stems, clip color 6
+4. **Bass** — standalone, clip color 24
+5. **Music** — synths, chords, keys, pads, strings, instruments — clip color 8
+6. **Vocals** — grouped when multiple, clip color 13
+7. **FX** — grouped when multiple, clip color 55
+8. **Sends** — reverb/delay stems if provided, clip color 17
+9. **Flat Reference Group** — all stems duplicated, clip color 14, group at bottom
+
+### Grouping Rules
+- **Group when 2+ stems** in the same category (except kick — always standalone)
+- Group names: "Drums", "Vox", "FX", etc. (short, descriptive)
+- Kick is NEVER inside a group, even if there are multiple kick stems
+
+### Project Folder Structure
+```
+Artist - Title [Label] Project/
+  Artist - Title [Label].als
+  Audio/
+    [all stems copied here]
+  Ableton Project Info/
+    AProject.ico
+  Backup/
+  MASTER RENDERS/
+  Samples/
+    Recorded/
+```
+
+### Naming Conventions
+- **ALS file**: `Artist - Title [Label].als`
+- **Project folder**: `Artist - Title [Label] Project`
+- **Master renders**: `Artist - Title SW V1.wav`, `SW V2.wav`, etc.
+
+## Connections
+- **Automated DJ Mixes** — shares the ABLETON_INTERACTION.md reference for ALS file manipulation. Same technical foundation.
+- **samwillsmixing.com** — this tool supports the mixing business by automating project setup.
+- **Wren** — could eventually trigger project setup automatically when new stems arrive.
