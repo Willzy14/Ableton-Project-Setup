@@ -22,12 +22,13 @@ Ableton Project Setup/
   .github/             # memory.json, activity log, this file
 ```
 
-## Current Status (2026-06-25) — what NOT to rebuild
-- ✅ **BPM auto-detection** — `Source/bpm_detector.py` (pure-stdlib kick onset + lattice fit). `project_builder` bpm arg is optional.
-- ✅ **Clip naming** — track name = display ("DR Kick"), clip name = original filename ("Kick").
-- ✅ **Classifier patterns** — BVs→vocals, Ref Bounce→reference, Tops/Fills/CABASA/DRM_*→drums.
-- ✅ **Flat reference** — single bounced track (`Source/bounce.py`), colour 37, muted, Ext. Out, last. Supplied refs kept as separate match tracks. NO ref GroupTrack.
-- ✅ **Working-track grouping** — drums/music/vocals/fx with 2+ stems → GroupTrack (audible, Main, expanded, category colour). Kick/bass/sends standalone.
-- ✅ **bounce.py** uses numpy when present (~15×) with bit-identical stdlib fallback.
-- ⚠️ Machine runs **Python 3.14.0** — saw a one-off transient JIT TypeError; re-run if a build crashes oddly.
-- **Next**: optional INST→music, optional Bass group, optional 24-bit RMS speedup.
+## Current Status (2026-06-25 EOD) — what NOT to rebuild
+- ✅ **BPM auto-detect** (`bpm_detector.py`), **clip naming** (track=display, clip=original).
+- ✅ **Classifier + audio full-mix detection** (`stem_analysis.py`) — filenames + crest/bands/sustain; full mixes (incl. "Current") → red refs, out of the sum.
+- ✅ **Flat-ref bounce** (`bounce.py`, numpy+stdlib) — single track, colour **14 (red)**, muted, Ext. Out. Replaced the old ref GroupTrack.
+- ✅ **Working-track grouping** incl. **bass** (category colour); **group-bus detection** (sum-of-others → colour 37 peach, muted, bottom, out of sum).
+- ✅ **numpy** in `bounce.py` + `find_audio_regions` (fixes 3.14 crash, faster; region-identical fallback).
+- ✅ **Multi-version packs** (`versions.py` + `build_multiversion_project`) — extended/radio on shared tracks, 16-bar sections, per-version flat-mix/refs/buses, Extended/Radio Edit markers.
+- 🔴 **#1 BUG (fix tomorrow): multi-version radio section is OFF-GRID** — align by first ACTUAL kick onset (not the folded grid phase); BPM rounding (127.71→128) also drifts unwarped audio. See AI_CONTEXT Known Issues #1.
+- ⚠️ Machine runs **Python 3.14.0** (miscompiles hot loops) — **install 3.13 first tomorrow**; use `PYTHON_JIT=0` meanwhile.
+- **Next**: 3.13 → off-grid fix → name-token versions (Get Right) → wet/dry.
