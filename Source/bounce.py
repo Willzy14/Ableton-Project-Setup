@@ -13,6 +13,7 @@ a pure-stdlib path when it isn't — so the tool still runs with no install.
 """
 import struct as _struct
 import sys
+import time
 from array import array
 from operator import add
 from pathlib import Path
@@ -205,12 +206,25 @@ def sum_stems_to_wav(stem_paths, output_path, chunk_seconds=1.0):
         raise ValueError("no stems share the first stem's sample rate")
 
     n_frames_out = max(hdr["n_frames"] for _, hdr in included)
-    if _np is not None:
-        peak = _sum_numpy(included, sr0, n_frames_out, output_path)
-        engine = "numpy"
+    engine = "numpy" if _np is not None else "stdlib"
+    # Retry the write: projects live in Dropbox, which can briefly lock the
+    # output file mid-sync (esp. when overwriting on a rebuild).
+    last_err = None
+    for attempt in range(8):
+        try:
+            if _np is not None:
+                peak = _sum_numpy(included, sr0, n_frames_out, output_path)
+            else:
+                peak = _sum_stdlib(included, sr0, n_frames_out, output_path, chunk_seconds)
+            break
+        except PermissionError as e:
+            last_err = e
+            time.sleep(2.0)
     else:
-        peak = _sum_stdlib(included, sr0, n_frames_out, output_path, chunk_seconds)
-        engine = "stdlib"
+        raise PermissionError(
+            str(last_err) + " — the output file stayed locked (Dropbox/AV may "
+            "be syncing it). Close it elsewhere or retry the build."
+        )
 
     return {
         "path": Path(output_path),

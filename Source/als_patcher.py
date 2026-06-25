@@ -1081,21 +1081,27 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir):
     audio_pre = [t for t in all_tracks_pre if t["type"] == "AudioTrack"]
     for stem_idx, stem in enumerate(stems):
         track_idx = stem_idx + 1
-        if track_idx < len(audio_pre) and stem.get("category") != "reference":
+        if track_idx < len(audio_pre) and stem.get("category") not in ("reference", "bus"):
             set_track_lane_height(lines, audio_pre[track_idx], 17)
             set_track_unfolded(lines, audio_pre[track_idx], True)
 
     # Reference tracks (flat bounce + any supplied ref/riff/master) sit at the
     # bottom as standalone tracks: routed to Ext. Out and muted, so they're
     # there for A/B but don't run through the master chain. No GroupTrack.
+    # Group buses sit at the very bottom (below the refs): muted, own colour,
+    # routed to Main (unmute one to grab it back) — kept for recall, not summed.
     all_tracks_ref = find_track_ranges(lines)
     audio_ref = [t for t in all_tracks_ref if t["type"] == "AudioTrack"]
     for stem_idx, stem in enumerate(stems):
-        if stem.get("category") == "reference":
-            tidx = stem_idx + 1
-            if tidx < len(audio_ref):
-                set_track_output_external(lines, audio_ref[tidx])
-                set_track_muted(lines, audio_ref[tidx])
+        cat = stem.get("category")
+        tidx = stem_idx + 1
+        if tidx >= len(audio_ref):
+            continue
+        if cat == "reference":
+            set_track_output_external(lines, audio_ref[tidx])
+            set_track_muted(lines, audio_ref[tidx])
+        elif cat == "bus":
+            set_track_muted(lines, audio_ref[tidx])
 
     # Working-track groups: wrap each groupable category with 2+ stems in a
     # GroupTrack (audible, routed to Main, expanded). Children route into it.

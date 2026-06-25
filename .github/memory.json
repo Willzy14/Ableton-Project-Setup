@@ -62,6 +62,11 @@
     },
     {
       "date": "2026-06-25",
+      "decision": "Group-bus / sub-mix stems (a bus left among individual stems) are detected via find_group_buses() in stem_analysis.py: stems are sample-aligned, so a bus is the sum of its members; a non-negative greedy matching pursuit (Gram-matrix space) flags any stem reconstructed >88% by a positive sum of >=2 others. Buses are parked muted/grey (37) at the very bottom below refs, kept for recall, and excluded from the flat-ref sum. Non-negativity flags the bus, never its members.",
+      "why": "Sam: this is a big, frequent problem on real packs — a producer leaves a group bus among the stems, you press play and everything sounds wrong (double-counted), then have to hunt for which stem is the bus. Filenames/spectra can't distinguish a bus from a stem, but the sample-aligned sum relationship can. Validated: caught Coldabank 'All Drums' + Far Away 'BASS EGYBE' (=b+b_3) with no false positives."
+    },
+    {
+      "date": "2026-06-25",
       "decision": "Ambiguous stems get an audio-content check (Source/stem_analysis.py, numpy FFT): a file filenames can't place that reads as a full mix (crest<=5 + 6+ bands + sustain>=0.6) is moved to references so it's never summed into the flat bounce. Approach borrowed from Loudness Leveller (band energy) + Automated DJ Mixes (low-end) but implemented numpy-only (no librosa/ffmpeg); filename-only fallback if numpy absent. Audio kick-detection was tried and dropped — kick vs bass overlap too much on aggregate spectral features; filenames (incl. 'K') handle kicks.",
       "why": "A test batch of 5 random finished mixes showed cryptically-named full mixes ('Current', 'TEST MIX') being summed into the flat ref and polluting it (Far Away peaked 3.85). Filenames are unreliable on messy real packs; audio content is the robust signal. Crest factor (compression) is the key full-mix discriminator, tuned/validated on labelled real files."
     },

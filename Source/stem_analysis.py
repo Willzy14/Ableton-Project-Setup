@@ -140,6 +140,78 @@ def audio_label(wav_path):
     return None
 
 
+def find_group_buses(stem_paths, sr_target=3000, max_seconds=180.0,
+                     residual_thresh=0.12, min_members=2, min_coef=0.25,
+                     return_detail=False):
+    """Find stems that are a (near-)exact sum of >=2 OTHER stems — i.e. group
+    bus / sub-mix bounces left in among the individual stems.
+
+    Stems are sample-aligned (one session export), so a bus == sum of its
+    members in the time domain. For each candidate we run a non-negative greedy
+    matching pursuit over the other stems: if a positive-coefficient sum of >=2
+    of them reconstructs >=(1-residual_thresh) of the candidate's energy, it's a
+    bus. Non-negativity is what flags the bus and not its members (a member
+    would need to SUBTRACT the others, which is disallowed).
+
+    Returns a set of bus paths (or, if return_detail, a dict path -> {residual,
+    members[]}). Empty without numpy or with <3 stems.
+    """
+    if _np is None or len(stem_paths) < 3:
+        return {} if return_detail else set()
+
+    arrs = []
+    for p in stem_paths:
+        y, sr = _load_mono(p, max_seconds)
+        if y is None or y.size == 0:
+            arrs.append(None)
+            continue
+        factor = max(1, int(round(sr / sr_target)))
+        n = (y.size // factor) * factor
+        arrs.append(y[:n].reshape(-1, factor).mean(axis=1).astype(_np.float32)
+                    if n else None)
+
+    valid = [i for i, a in enumerate(arrs) if a is not None and a.size]
+    if len(valid) < 3:
+        return {} if return_detail else set()
+    L = max(arrs[i].size for i in valid)
+    S = _np.zeros((len(arrs), L), dtype=_np.float32)
+    for i in valid:
+        S[i, :arrs[i].size] = arrs[i]
+
+    G = S @ S.T
+    diag = _np.diag(G).copy()
+    detail = {}
+    for i in valid:
+        if diag[i] <= 1e-9:
+            continue
+        proj = G[i].copy()
+        res_e = float(diag[i])
+        chosen = []
+        for _ in range(24):
+            best, best_score = -1, 0.0
+            for j in valid:
+                if j == i or j in chosen or diag[j] <= 1e-9 or proj[j] <= 0:
+                    continue
+                score = proj[j] / (diag[j] ** 0.5)
+                if score > best_score:
+                    best_score, best = score, j
+            if best < 0:
+                break
+            coef = proj[best] / diag[best]
+            if coef < min_coef:
+                break
+            res_e -= coef * proj[best]
+            proj = proj - coef * G[best]
+            chosen.append(best)
+            if res_e / diag[i] < residual_thresh and len(chosen) >= min_members:
+                detail[stem_paths[i]] = {
+                    "residual": round(max(res_e, 0.0) / diag[i], 3),
+                    "members": [Path(stem_paths[m]).name for m in chosen],
+                }
+                break
+    return detail if return_detail else set(detail.keys())
+
+
 def _main():
     import json
     for p in sys.argv[1:]:

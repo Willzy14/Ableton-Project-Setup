@@ -15,13 +15,17 @@ from stem_classifier import classify_stems, apply_track_names, CATEGORIES
 from als_patcher import patch_project, find_audio_regions
 from bpm_detector import detect_bpm
 from bounce import sum_stems_to_wav
-from stem_analysis import audio_label
+from stem_analysis import audio_label, find_group_buses
 
 TEMPLATE_PATH = Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates\Ableton Project Set Up 250 Tracks.als")
 
 # Colour for the reference tracks at the bottom (flat bounce + any supplied
 # ref/master). 14 = red — Sam wants the reference tracks red.
 REF_TRACK_COLOR = 14
+
+# Colour for detected group-bus / sub-mix stems — parked muted at the very
+# bottom, below the references. 37 = a neutral grey (distinct from red refs).
+BUS_TRACK_COLOR = 37
 OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\0.1---GIT HUB---\Ableton Project Setup")
 
 
@@ -147,6 +151,31 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
                 "regions": regions,
             })
 
+    # --- Group-bus detection -------------------------------------------------
+    # A stem that is the (near-exact) sum of >=2 other stems is a group/sub-mix
+    # bounce left in among the individual stems. Summing it double-counts and
+    # makes everything sound wrong on play. Pull these out: keep them in the
+    # project (own colour, parked muted at the bottom) but OUT of the flat-ref
+    # sum and OUT of the working layout. No-op without numpy.
+    bus_tracks = []
+    bus_paths = find_group_buses([s["file_path"] for s in stems])
+    if bus_paths:
+        buses = [s for s in stems if s["file_path"] in bus_paths]
+        stems = [s for s in stems if s["file_path"] not in bus_paths]
+        print("\nGroup-bus detection: these are a sum of other stems — kept OUT "
+              "of the flat-ref sum, parked (muted, grey) at the bottom:")
+        for s in buses:
+            print("  " + s["file_path"].name)
+            bus_tracks.append({
+                "name": s["file_path"].stem,
+                "clip_name": s["file_path"].stem,
+                "category": "bus",
+                "color": BUS_TRACK_COLOR,
+                "file_path": s["file_path"],
+                "rel_path": s["rel_path"],
+                "regions": None,
+            })
+
     apply_track_names(stems)
     for s in stems:
         s["clip_name"] = s["file_path"].stem   # clip label = original source filename
@@ -203,7 +232,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
         "regions": None,
     })
 
-    all_stems = stems + ref_tracks
+    all_stems = stems + ref_tracks + bus_tracks
 
     print("Classification summary:")
     cat_counts = {}
@@ -213,6 +242,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
         print("  " + cat.upper() + ": " + str(cat_counts[cat]) + " stems")
     print("  REF TRACKS: " + str(len(ref_tracks)) + " (flat bounce + "
           + str(len(references)) + " supplied)")
+    if bus_tracks:
+        print("  GROUP BUSES: " + str(len(bus_tracks)) + " (parked muted at bottom)")
     print("  TOTAL TRACKS: " + str(len(all_stems)) + " (+ Session Time)")
 
     als_path = project_folder / (project_name + ".als")
