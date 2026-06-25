@@ -26,9 +26,10 @@
     },
     {
       "date": "2026-06-25",
-      "summary": "Added pure-stdlib BPM auto-detection (Source/bpm_detector.py) — algorithm borrowed from Automated DJ Mixes (attack_onsets + lattice_fit), adapted to need no numpy/scipy/Demucs since our stems are pre-isolated. Integrated into project_builder (bpm arg now optional, detects from kick). Validated exact on 4 real kicks (122/134/130/125).",
+      "summary": "Three features: (1) pure-stdlib BPM auto-detection (Source/bpm_detector.py) borrowed from Automated DJ Mixes (attack_onsets + lattice_fit), no numpy/scipy/Demucs; bpm arg now optional, detects from kick; validated exact on 4 kicks. (2) Clip naming — track=display, clip=original filename. (3) Classifier patterns BVs/Tops/Fills/CABASA/DRM_/Ref Bounce. (4) Replaced duplicated-stems flat-reference GroupTrack with a single bounced flat-ref track (Source/bounce.py, pure-stdlib stem sum -> float32 WAV): color 37, muted, Ext. Out, last; supplied ref/master files kept as separate match tracks, never summed. Retired the ref-group-expand bug.",
       "files_changed": [
         "Source/bpm_detector.py",
+        "Source/bounce.py",
         "Source/project_builder.py",
         "Source/stem_classifier.py",
         "Source/als_patcher.py",
@@ -36,8 +37,8 @@
         ".github/ai-activity-log.md"
       ],
       "pending": [
-        "Investigate ref group opening expanded in Ableton 12.4 (low priority)",
-        "Optional: classify INST ALL / instrumental bounces (currently land in music via fallback)"
+        "Optional: classify INST ALL / instrumental bounces (currently land in music via fallback)",
+        "Optional: speed up bounce.py with numpy if large-pack build times become annoying"
       ]
     }
   ],
@@ -51,6 +52,11 @@
       "date": "2026-05-19",
       "decision": "Stems are placed unwarped (IsWarped=false). BPM detected from kick/snare sets global tempo.",
       "why": "Sam's stems arrive pre-rendered at the correct BPM. No time-stretching needed."
+    },
+    {
+      "date": "2026-06-25",
+      "decision": "Flat reference is always our own pure-stdlib bounce (sum of mix stems), never a supplied 'ref'/'riff'/master file. Single track at the bottom, color 37, muted, routed to Ext. Out. Supplied references kept as separate match tracks. No GroupTrack.",
+      "why": "A supplied ref file can't be trusted to equal the stem sum (may be another artist's track or a limited master); verifying it would require bouncing the sum anyway, so always print our own. Single track + Ext. Out bypasses the master chain and retires the long-standing 'ref group opens expanded' bug."
     }
   ]
 }

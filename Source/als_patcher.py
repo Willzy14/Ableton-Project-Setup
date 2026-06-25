@@ -104,6 +104,37 @@ def set_track_color(lines, track, color):
             break
 
 
+def set_track_output_external(lines, track):
+    """Route a track's audio output to Ext. Out 1/2 (bypasses the master chain).
+
+    Matches Sam's real reference/master tracks: AudioOut/External/S0.
+    """
+    in_block = False
+    for i in range(track["start"], track["end"] + 1):
+        if "<AudioOutputRouting>" in lines[i]:
+            in_block = True
+        elif "</AudioOutputRouting>" in lines[i]:
+            break
+        elif in_block:
+            if "<Target Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value="AudioOut/External/S0"', lines[i])
+            elif "<UpperDisplayString Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value="Ext. Out"', lines[i])
+            elif "<LowerDisplayString Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value="1/2"', lines[i])
+
+
+def set_track_muted(lines, track):
+    """Mute a track (Speaker/Manual=false) — the in-mixer 'track off' state."""
+    in_spk = False
+    for i in range(track["start"], track["end"] + 1):
+        if "<Speaker>" in lines[i]:
+            in_spk = True
+        elif in_spk and "<Manual Value=" in lines[i]:
+            lines[i] = re.sub(r'Value="[^"]*"', 'Value="false"', lines[i])
+            break
+
+
 CLIP_START_BEATS = 128  # bar 33 in 4/4
 
 
@@ -1030,28 +1061,17 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir):
             set_track_lane_height(lines, audio_pre[track_idx], 17)
             set_track_unfolded(lines, audio_pre[track_idx], True)
 
-    first_ref_idx = None
-    for i, s in enumerate(stems):
-        if s.get("category") == "reference":
-            first_ref_idx = i
-            break
-
-    if first_ref_idx is not None:
-        all_tracks_now = find_track_ranges(lines)
-        audio_now = [t for t in all_tracks_now if t["type"] == "AudioTrack"]
-        ref_track_idx = first_ref_idx + 1
-        if ref_track_idx < len(audio_now):
-            group_id = _alloc_id()
-            insert_line = audio_now[ref_track_idx]["start"]
-            insert_group_track(lines, insert_line, "Ref", group_id)
-
-            all_tracks_after = find_track_ranges(lines)
-            audio_after = [t for t in all_tracks_after if t["type"] == "AudioTrack"]
-            for i in range(first_ref_idx, len(stems)):
-                if stems[i].get("category") == "reference":
-                    tidx = i + 1
-                    if tidx < len(audio_after):
-                        set_track_group_id(lines, audio_after[tidx], group_id)
+    # Reference tracks (flat bounce + any supplied ref/riff/master) sit at the
+    # bottom as standalone tracks: routed to Ext. Out and muted, so they're
+    # there for A/B but don't run through the master chain. No GroupTrack.
+    all_tracks_ref = find_track_ranges(lines)
+    audio_ref = [t for t in all_tracks_ref if t["type"] == "AudioTrack"]
+    for stem_idx, stem in enumerate(stems):
+        if stem.get("category") == "reference":
+            tidx = stem_idx + 1
+            if tidx < len(audio_ref):
+                set_track_output_external(lines, audio_ref[tidx])
+                set_track_muted(lines, audio_ref[tidx])
 
     tracks_to_remove = []
     all_tracks = find_track_ranges(lines)

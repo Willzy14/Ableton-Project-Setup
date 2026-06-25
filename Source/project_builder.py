@@ -14,10 +14,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from stem_classifier import classify_stems, apply_track_names, CATEGORIES
 from als_patcher import patch_project, find_audio_regions
 from bpm_detector import detect_bpm
+from bounce import sum_stems_to_wav
 
 TEMPLATE_PATH = Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates\Ableton Project Set Up 250 Tracks.als")
 
-FLAT_REF_COLOR = 14
+# Colour for the reference tracks at the bottom (flat bounce + any supplied
+# ref/master). 37 matches Sam's real projects' reference/master tracks.
+REF_TRACK_COLOR = 37
 OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\0.1---GIT HUB---\Ableton Project Setup")
 
 
@@ -122,19 +125,45 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
         s["clip_name"] = s["file_path"].stem   # clip label = original source filename
         s["name"] = s["display_name"]          # track label = simplified display name
 
-    flat_ref_stems = []
-    for s in stems:
-        flat_ref_stems.append({
-            "name": s["file_path"].stem,
-            "clip_name": s["file_path"].stem,
+    # --- Reference tracks at the bottom -------------------------------------
+    # Always print our own flat bounce of the mix stems (a supplied "ref"/
+    # "riff"/master file can't be trusted to equal the stem sum). Supplied
+    # references are kept as separate match tracks, excluded from the sum.
+    ref_tracks = []
+
+    for f in references:
+        dest = audio_folder / f.name
+        if not dest.exists():
+            shutil.copy2(f, dest)
+        ref_tracks.append({
+            "name": f.stem,
+            "clip_name": f.stem,
             "category": "reference",
-            "color": FLAT_REF_COLOR,
-            "file_path": s["file_path"],
-            "rel_path": s["rel_path"],
-            "regions": s["regions"],
+            "color": REF_TRACK_COLOR,
+            "file_path": dest,
+            "rel_path": "Audio/" + f.name,
+            "regions": None,
         })
 
-    all_stems = stems + flat_ref_stems
+    print("\nBouncing flat reference (summing " + str(len(stems)) + " mix stems)...")
+    bounce_name = project_name + " FLAT REF.wav"
+    bounce_path = audio_folder / bounce_name
+    summary = sum_stems_to_wav([s["file_path"] for s in stems], bounce_path)
+    print("  " + str(summary["n_summed"]) + " stems summed -> " + bounce_name
+          + " (peak " + ("%.2f" % summary["peak"]) + ")")
+    if summary["skipped"]:
+        print("  WARNING skipped (sample-rate mismatch): " + ", ".join(summary["skipped"]))
+    ref_tracks.append({
+        "name": "FLAT REF",
+        "clip_name": bounce_path.stem,
+        "category": "reference",
+        "color": REF_TRACK_COLOR,
+        "file_path": bounce_path,
+        "rel_path": "Audio/" + bounce_name,
+        "regions": None,
+    })
+
+    all_stems = stems + ref_tracks
 
     print("Classification summary:")
     cat_counts = {}
@@ -142,7 +171,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
         cat_counts[s["category"]] = cat_counts.get(s["category"], 0) + 1
     for cat in sorted(cat_counts.keys(), key=lambda c: CATEGORIES[c]["order"]):
         print("  " + cat.upper() + ": " + str(cat_counts[cat]) + " stems")
-    print("  FLAT REF: " + str(len(flat_ref_stems)) + " stems (duplicated)")
+    print("  REF TRACKS: " + str(len(ref_tracks)) + " (flat bounce + "
+          + str(len(references)) + " supplied)")
     print("  TOTAL TRACKS: " + str(len(all_stems)) + " (+ Session Time)")
 
     als_path = project_folder / (project_name + ".als")

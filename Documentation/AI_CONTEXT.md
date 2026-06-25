@@ -45,15 +45,16 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 **Classifier patterns extended (2026-06-25).** Added: `BVs`→vocals (note the camel-splitter turns "BVs" into "b vs", handled), `Ref Bounce`→reference, `Tops`/`Fills`(plural)/`CABASA`/`DRM_*`→drums. Verified on real Coldabank + Lucozade folders; 11 regression cases held.
 
+**Flat reference is now a single bounced track, not a group (2026-06-25).** The duplicated-stems GroupTrack is gone. `bounce.py` sums the mix stems (pure stdlib → 32-bit float WAV) into one flat-ref track at the bottom: colour 37, muted, Ext. Out. Supplied ref/master files are kept as separate match tracks (same treatment), never summed. Verified on a real ALS build: no GroupTrack, FLAT REF last + ext + muted, supplied "Ref Bounce" kept as a match track, working tracks untouched. **This retired the "ref group opens expanded" bug.** Perf note: summing is pure Python — ~32s for 14 stems @ 2 min; a 30-stem/6-min track will take a few minutes.
+
 **Known issues / not yet working**:
-1. **Ref group still opens expanded in Ableton 12.4** despite TrackUnfolded=false on GroupTrack and matching Sam's saved (collapsed) GroupTrack structure exactly. Multiple fix attempts (clearing IsContentSelectedInDocument, rewriting GroupTrack template to canonical 12.4 format) didn't resolve. Low priority — Sam can collapse manually.
-2. **`INST ALL` (full instrumental bounce) still unclassified** → falls through to the music bucket with a warning. Out of scope for the 2026-06-25 pass; add `\binst\b`→music if desired.
-3. `Group` (bus bounces from producer) → goes to music, OK behaviour.
+1. **`INST ALL` (full instrumental bounce) still unclassified** → falls through to the music bucket with a warning. Out of scope for the 2026-06-25 pass; add `\binst\b`→music if desired.
+2. `Group` (bus bounces from producer) → goes to music, OK behaviour.
+3. Bounce summing is slow on large packs (pure stdlib). If it ever becomes a bottleneck, numpy would make the sum ~50× faster — a targeted dependency just for `bounce.py`.
 
 ## What's Next
-1. Investigate why ref group opens expanded (low priority — Sam can collapse manually)
-2. Optional: classify `INST ALL` / instrumental bounces (currently land in music via the unclassified fallback)
-4. ~~Auto-detect BPM as part of build pipeline~~ — DONE 2026-06-25 (bpm_detector.py, integrated into project_builder)
+1. Optional: classify `INST ALL` / instrumental bounces (currently land in music via the unclassified fallback)
+2. Optional: speed up `bounce.py` (numpy) if large-pack build times become annoying
 
 ## Key Decisions
 - **No XML libraries** — ALS files are patched as raw text lines per ABLETON_INTERACTION.md. `xml.etree.ElementTree` would corrupt the format.
@@ -61,7 +62,7 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 - **BPM from percussion** — kick or snare is the most reliable BPM source. Global tempo is set from this.
 - **Template-based approach** — start from a known-good ALS file saved by Ableton, patch in stems dynamically.
 - **Track AND clip colours match** — both set to the same palette index per category (6/24/8/13/55/17/14). Sam's existing projects only had clip colours set, but the tool now sets both for consistency.
-- **Flat reference group** — all stems duplicated into a summing group at the bottom of the project, clips coloured red (14), so Sam can A/B his mix against the original stems.
+- **Flat reference track (2026-06-25, replaced the group)** — instead of duplicating every stem into a summing group, the tool now prints a single **flat bounce** of the mix stems (pure-stdlib sum → 32-bit float WAV, [bounce.py](Source/bounce.py)) as one track at the very bottom: colour 37, muted, output routed to **Ext. Out** (bypasses the master chain). A supplied "ref"/"riff"/master file is NEVER trusted to be the flat sum (it may be someone else's track or a limited master) — we always print our own bounce, and keep any supplied reference as its own match track (same colour 37 / muted / Ext. Out treatment). This also retired the long-standing "ref group opens expanded" bug — there is no group any more.
 - **Session Time track** — always first, has HOFA Project Time plugin, tracks time spent on each project. Must be in every project (comes from template).
 - **Send stems are from producers** — reverb, delay, chorus stems are part of the stem pack, not created by Sam. Tool needs to classify and place them.
 
@@ -76,7 +77,7 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 | 13 | Vocals | vocal, vox, acapella, voice, singing, lead vx, backing, harmony |
 | 55 | FX | fx, effect, riser, impact, sweep, noise, texture, atmosphere, ambient, vinyl, downlifter |
 | 17 | Sends | reverb, delay, chorus, echo (when provided as stems from the producer) |
-| 14 | Flat reference | used for the summing group at bottom (all stems, reduced level) |
+| 37 | Reference tracks | flat bounce + any supplied ref/master; muted, routed to Ext. Out, at the bottom |
 
 ### Track Order
 1. **Session Time** — always first, track color 27, HOFA Project Time plugin, no audio
@@ -87,7 +88,8 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 6. **Vocals** — grouped when multiple, clip color 13
 7. **FX** — grouped when multiple, clip color 55
 8. **Sends** — reverb/delay stems if provided, clip color 17
-9. **Flat Reference Group** — all stems duplicated, clip color 14, group at bottom
+9. **Supplied reference tracks** (if any) — each kept as its own match track, color 37, muted, Ext. Out
+10. **Flat Reference bounce** — single summed bounce of the mix stems, LAST track, color 37, muted, Ext. Out
 
 ### Grouping Rules
 - **Group when 2+ stems** in the same category (except kick — always standalone)
