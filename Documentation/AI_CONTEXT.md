@@ -114,6 +114,21 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 - Group names: **Drums / Bass / Music / Vox / FX**. Children route to `AudioOut/GroupTrack` with matching `TrackGroupId`.
 - **Kick and sends are never grouped** (standalone), even with multiple stems.
 
+### Stem Package Shapes (how producers deliver stems) — feature in progress (2026-06-25)
+Real packs aren't always one flat folder of stems. The builder must resolve the folder tree and lay things out accordingly:
+
+| Shape | What it is | Desired handling |
+|-------|-----------|------------------|
+| **Versions** | extended / radio edit / dub — same song, different arrangements. Packaged either as a **subfolder** (e.g. Fallon `Edit STems/`) or a **same-folder name-token** (e.g. Get Right `…S16…` vs `…S17 -SHRT EDIT…`) | Lay out as separate **timeline sections** down the arrangement: Extended first, then a **fixed 16-bar gap**, then Radio edit, then any further versions. Each element shares ONE track across versions (kick-on-kick) so per-track processing hits all versions. A **flat-mix bounce under each version**. |
+| **Category subfolders** | `drum stems/`, `vox stems/`, `instrument stems/` — one version split by type | **Flatten / stack** into the single version (walk the tree, pull them all in). Their elements are unique (don't mirror), which is how they're told apart from version subfolders. |
+| **Wet/dry** | same elements provided both wet and dry | **Wet ON** (normal tracks); **dry grouped + muted, parked underneath** the wet (kept for recall). |
+| **Group buses** | a stem = sum of others | DONE — muted/grey at bottom, out of the sum. |
+| **Full mixes / masters** | 2-mix, master, bounce | DONE — red refs (per version, under each section). |
+
+**Detection rule (versions vs category):** a subfolder whose element keys (filename after the last `_`, normalised) **mirror** the top-level stems (≥50% overlap) is an alternate VERSION; otherwise it's a CATEGORY subfolder and gets flattened in. `Source/versions.py::detect_versions()` does this — validated: Fallon → Extended + Edit STems with 39/39 elements paired; flat packs → None.
+
+**Build status:** version DETECTION done + validated (`versions.py`). Still to build: the LAYOUT engine (place each version's clips at its timeline offset on shared element-tracks; flat-mix bounce per version), same-folder name-token detection (Get Right), and wet/dry handling.
+
 ### Project Folder Structure
 ```
 Artist - Title [Label] Project/
