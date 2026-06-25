@@ -238,8 +238,10 @@ def detect_bpm(wav_path, min_bpm=MIN_BPM, max_bpm=MAX_BPM):
     """Detect BPM from an isolated percussive stem.
 
     Returns a dict with keys: bpm (float, 2dp), bpm_rounded (int),
-    period (sec), n_onsets, n_inliers, residual_ms (median |residual| of
-    inliers). Returns None when there aren't enough onsets to trust.
+    period (sec), first_beat_sec (the fitted beat-grid phase — where the kick
+    grid starts in the file, used to align later versions to the bar),
+    n_onsets, n_inliers, residual_ms. Returns None when there aren't enough
+    onsets to trust.
     """
     env, er = _read_envelope(wav_path)
     onsets = _pick_onsets(env, er)
@@ -259,10 +261,18 @@ def detect_bpm(wav_path, min_bpm=MIN_BPM, max_bpm=MAX_BPM):
         bpm /= 2
 
     inliers = [abs(r) for r in res if abs(r) <= 20.0]
+    # Where the kick grid starts in the file (its pre-roll). Use the fitted
+    # beat-0 directly so the FIRST kick aligns to the bar; fold only if the
+    # lattice anchored it absurdly far from the start.
+    first_beat_sec = first
+    if period and (first_beat_sec < 0 or first_beat_sec > 8 * period):
+        first_beat_sec = first % period
+    first_beat_sec = max(first_beat_sec, 0.0)
     return {
         "bpm": round(bpm, 2),
         "bpm_rounded": int(round(bpm)),
         "period": period,
+        "first_beat_sec": round(first_beat_sec, 4),
         "n_onsets": len(onsets),
         "n_inliers": len(inliers),
         "residual_ms": round(_median(inliers), 2) if inliers else None,

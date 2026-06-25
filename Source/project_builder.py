@@ -6,6 +6,7 @@ Usage:
 Example:
     python project_builder.py "./stems" "Ak1ra" "The Way" "Ramzi Karam" 122
 """
+import math
 import re
 import shutil
 import sys
@@ -393,10 +394,38 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base)
             for (_rs, _re) in (s["regions"] or []):
                 max_end = max(max_end, _re)
         p["length_beats"] = (max_end / 60.0) * bpm
+        # kick grid phase (pre-roll) so we can land this version's kick on a bar
+        kick_files = ([s["file_path"] for s in p["mix"] if s["category"] == "kick"]
+                      or [s["file_path"] for s in p["mix"] if s["category"] == "drums"])
+        p["first_beat_sec"] = 0.0
+        for kf in kick_files:
+            r = detect_bpm(kf)
+            if r:
+                p["first_beat_sec"] = r["first_beat_sec"]
+                break
 
-    offsets = [CLIP_START_BEATS]
-    for k in range(1, len(pv)):
-        offsets.append(offsets[k - 1] + pv[k - 1]["length_beats"] + VERSION_GAP_BARS * 4)
+    def _version_label(k):
+        p = pv[k]
+        blob = (p["name"] + " " + " ".join(s["orig_name"] for s in p["mix"][:5])).lower()
+        if "radio" in blob:
+            return "Radio Edit"
+        if "dub" in blob:
+            return "Dub"
+        if "instrumental" in blob or " inst" in blob:
+            return "Instrumental"
+        return "Extended" if k == 0 else p["name"]
+
+    # Each version's KICK lands on a bar line; the whole version shifts with it
+    # (stays in sync), so a pre-downbeat swoosh becomes a pickup before the bar.
+    offsets = []
+    locators = []
+    bar_cursor = float(CLIP_START_BEATS)
+    for k, p in enumerate(pv):
+        fb_beats = (p["first_beat_sec"] / 60.0) * bpm
+        offsets.append(bar_cursor - fb_beats)
+        locators.append((bar_cursor, _version_label(k)))
+        content_end = offsets[k] + p["length_beats"]
+        bar_cursor = math.ceil((content_end + VERSION_GAP_BARS * 4) / 4.0) * 4
 
     primary = pv[0]
     for s in primary["mix"]:
@@ -485,7 +514,8 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base)
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template (" + str(len(all_stems)) + " tracks)...")
     patch_project(template_path=TEMPLATE_PATH, output_path=als_path,
-                  stems=all_stems, bpm=bpm, project_audio_dir=audio_folder)
+                  stems=all_stems, bpm=bpm, project_audio_dir=audio_folder,
+                  locators=locators)
 
     bars = [str(int((offsets[i] - CLIP_START_BEATS) / 4) + 33) for i in range(len(pv))]
     print("\nMulti-version project created: " + str(project_folder))

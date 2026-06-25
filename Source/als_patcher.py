@@ -1026,7 +1026,40 @@ def set_global_tempo(lines, bpm):
                 found_pointee = False
 
 
-def patch_project(template_path, output_path, stems, bpm, project_audio_dir):
+def insert_locators(lines, locators):
+    """Fill the arrangement Locators (markers). locators = [(time_beat, name)].
+
+    Replaces the empty <Locators /> with named locator entries.
+    """
+    if not locators:
+        return
+    block = []
+    for time_beat, name in locators:
+        lid = _alloc_id()
+        tval = ("%d" % round(time_beat)) if abs(time_beat - round(time_beat)) < 1e-6 else ("%.6f" % time_beat)
+        block.extend([
+            '\t\t\t\t<Locator Id="' + str(lid) + '">' + CRLF,
+            '\t\t\t\t\t<LomId Value="0" />' + CRLF,
+            '\t\t\t\t\t<Time Value="' + tval + '" />' + CRLF,
+            '\t\t\t\t\t<Name Value="' + _xml_escape(name) + '" />' + CRLF,
+            '\t\t\t\t\t<Annotation Value="" />' + CRLF,
+            '\t\t\t\t\t<IsSongStart Value="false" />' + CRLF,
+            '\t\t\t\t</Locator>' + CRLF,
+        ])
+    for i, line in enumerate(lines):
+        if "<Locators>" in line:
+            # the inner empty list is the next line: <Locators />
+            for j in range(i + 1, min(i + 4, len(lines))):
+                if "<Locators />" in lines[j]:
+                    indent = lines[j][:len(lines[j]) - len(lines[j].lstrip())]
+                    new = [indent + "<Locators>" + CRLF] + block + [indent + "</Locators>" + CRLF]
+                    lines[j:j + 1] = new
+                    return
+            return
+
+
+def patch_project(template_path, output_path, stems, bpm, project_audio_dir,
+                  locators=None):
     """Main entry point: patch a template with stems and write the result.
 
     Args:
@@ -1184,6 +1217,7 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir):
     remove_tracks_by_indices(lines, tracks_to_remove)
 
     clear_all_selections(lines)
+    insert_locators(lines, locators)
 
     for i, line in enumerate(lines):
         if "<NextPointeeId" in line:
