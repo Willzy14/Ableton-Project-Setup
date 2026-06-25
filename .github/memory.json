@@ -23,6 +23,22 @@
         "Define stem classification rules",
         "Build ALS template and Python patcher"
       ]
+    },
+    {
+      "date": "2026-06-25",
+      "summary": "Added pure-stdlib BPM auto-detection (Source/bpm_detector.py) — algorithm borrowed from Automated DJ Mixes (attack_onsets + lattice_fit), adapted to need no numpy/scipy/Demucs since our stems are pre-isolated. Integrated into project_builder (bpm arg now optional, detects from kick). Validated exact on 4 real kicks (122/134/130/125).",
+      "files_changed": [
+        "Source/bpm_detector.py",
+        "Source/project_builder.py",
+        "Source/stem_classifier.py",
+        "Source/als_patcher.py",
+        "Documentation/AI_CONTEXT.md",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Investigate ref group opening expanded in Ableton 12.4 (low priority)",
+        "Optional: classify INST ALL / instrumental bounces (currently land in music via fallback)"
+      ]
     }
   ],
   "decisions": [

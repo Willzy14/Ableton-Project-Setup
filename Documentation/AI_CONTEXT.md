@@ -26,26 +26,34 @@ Ableton Project Setup/
 ```
 
 ## How to Run
-Not yet implemented.
+```
+# BPM auto-detected from the kick stem:
+python Source/project_builder.py "<stem_folder>" "<Artist>" "<Title>" "<Label>"
+
+# Or pass BPM explicitly (overrides detection):
+python Source/project_builder.py "<stem_folder>" "<Artist>" "<Title>" "<Label>" 122
+```
+Pure-stdlib — no `pip install` required. Standalone BPM check:
+`python Source/bpm_detector.py "<kick stem>.wav"`
 
 ## Current State
 **Phase: V1 working end-to-end.** Built and tested with 5 real projects (Ak1ra, Sparks, Jones - Fire In Your Eyes 130bpm, Coldabank - Never Say Sorry 134bpm, Pressure - Lucozade 125bpm). Working end-to-end: classification, BPM detection from kick onsets, multi-clip silence-aware placement, GroupTrack for ref stems, track heights (LaneHeight=17), TrackUnfolded=true on working tracks for inline waveforms.
 
+**BPM auto-detection is now integrated (2026-06-25).** `bpm_detector.py` is a pure-stdlib module (no numpy/scipy/librosa) — algorithm borrowed from Automated DJ Mixes (`attack_onsets` + `lattice_fit`), adapted because our stems arrive pre-isolated (no Demucs needed). `project_builder` now detects BPM from the kick (fallback drums → bass) when the bpm arg is omitted or "auto"; an explicit bpm still overrides. Validated against 4 real kicks — Ak1ra 122, Coldabank 134, Jones 130, Lucozade 125 — all exact, sub-millisecond grid fits.
+
+**Clip naming fixed (2026-06-25).** TRACK name = simplified display ("DR Kick"); CLIP name = original source filename ("Kick"). Threaded a separate `clip_name` field through `project_builder` → `patch_project` → `insert_clip_into_track`. Verified in a real generated ALS.
+
+**Classifier patterns extended (2026-06-25).** Added: `BVs`→vocals (note the camel-splitter turns "BVs" into "b vs", handled), `Ref Bounce`→reference, `Tops`/`Fills`(plural)/`CABASA`/`DRM_*`→drums. Verified on real Coldabank + Lucozade folders; 11 regression cases held.
+
 **Known issues / not yet working**:
 1. **Ref group still opens expanded in Ableton 12.4** despite TrackUnfolded=false on GroupTrack and matching Sam's saved (collapsed) GroupTrack structure exactly. Multiple fix attempts (clearing IsContentSelectedInDocument, rewriting GroupTrack template to canonical 12.4 format) didn't resolve. Low priority — Sam can collapse manually.
-2. **Clip names use simplified display names** (e.g., "DR Kick") instead of original source filenames. Audio files on disk DO keep original names, but the in-Ableton clip label is the display name. Sam wants: TRACK name = simplified display, CLIP name = original filename. Fix in `insert_clip_into_track` — use original stem filename for clip Name, not stem["name"].
-3. **Classifier misses some patterns** discovered in real-world stems:
-   - `BVs` (background vocals) → should map to vocals
-   - `Ref Bounce` → should map to reference
-   - `DRM_TOPS`, `Tops`, `Fills` → should map to drums
-   - `CABASA` → should map to drums (percussion)
-   - `Group` (bus bounces from producer) → currently goes to music, OK behaviour
+2. **`INST ALL` (full instrumental bounce) still unclassified** → falls through to the music bucket with a warning. Out of scope for the 2026-06-25 pass; add `\binst\b`→music if desired.
+3. `Group` (bus bounces from producer) → goes to music, OK behaviour.
 
 ## What's Next
-1. Fix clip naming — clip Name should be original source filename, not display_name
-2. Add missing classifier patterns (BVs, Tops, Fills, CABASA, Ref Bounce, DRM_*)
-3. Investigate why ref group opens expanded (low priority — Sam can collapse manually)
-4. Possibly: auto-detect BPM as part of build pipeline (currently in detect_bpm.py prototype, not integrated)
+1. Investigate why ref group opens expanded (low priority — Sam can collapse manually)
+2. Optional: classify `INST ALL` / instrumental bounces (currently land in music via the unclassified fallback)
+4. ~~Auto-detect BPM as part of build pipeline~~ — DONE 2026-06-25 (bpm_detector.py, integrated into project_builder)
 
 ## Key Decisions
 - **No XML libraries** — ALS files are patched as raw text lines per ABLETON_INTERACTION.md. `xml.etree.ElementTree` would corrupt the format.

@@ -1013,8 +1013,9 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir):
 
         regions = stem.get("regions", None)
 
+        clip_name = stem.get("clip_name", stem["name"])
         inserted = insert_clip_into_track(
-            lines, track, stem["name"], stem["color"],
+            lines, track, clip_name, stem["color"],
             rel_path, abs_path,
             sample_count, sample_rate, file_size, bpm,
             regions=regions
