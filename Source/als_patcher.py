@@ -4,9 +4,15 @@ All edits are line-level text operations. Never use XML parsing libraries.
 Line endings are always \r\n.
 """
 import gzip
+import math
 import re
 import os
 from pathlib import Path
+
+try:
+    import numpy as _np
+except ImportError:  # pragma: no cover
+    _np = None
 
 CRLF = "\r\n"
 _NEXT_ID = 50000
@@ -204,6 +210,43 @@ def get_wav_info(wav_path):
     return hdr["n_frames"], hdr["rate"], file_size
 
 
+def _rms_windows_np(raw, n_ch, bps, is_float, window_frames):
+    """Per-window RMS in dBFS via numpy (vectorised) — same values as the
+    pure-Python loop, but C-level (fast, and dodges the 3.14 interpreter
+    miscompiling the per-sample Python loops). Returns a list of dB floats.
+    """
+    if is_float and bps == 4:
+        a = _np.frombuffer(raw, "<f4").astype(_np.float64)
+    elif bps == 2:
+        a = _np.frombuffer(raw, "<i2").astype(_np.float64) / 32768.0
+    elif bps == 4:
+        a = _np.frombuffer(raw, "<i4").astype(_np.float64) / 2147483648.0
+    elif bps == 3:
+        u = _np.frombuffer(raw, _np.uint8)
+        m = (u.size // 3) * 3
+        u = u[:m].reshape(-1, 3).astype(_np.int32)
+        v = u[:, 0] | (u[:, 1] << 8) | (u[:, 2] << 16)
+        v = _np.where(v >= 0x800000, v - 0x1000000, v)
+        a = v.astype(_np.float64) / 8388608.0
+    else:
+        return []
+    ws = window_frames * n_ch
+    if ws <= 0 or a.size == 0:
+        return []
+    out = []
+    nfull = a.size // ws
+    if nfull:
+        body = a[:nfull * ws].reshape(nfull, ws)
+        rms = _np.sqrt((body * body).mean(axis=1))
+        db = _np.where(rms > 0, 20.0 * _np.log10(_np.maximum(rms, 1e-12)), -120.0)
+        out = db.tolist()
+    rem = a[nfull * ws:]
+    if rem.size:
+        r = float(_np.sqrt((rem * rem).mean()))
+        out.append(20.0 * math.log10(r) if r > 0 else -120.0)
+    return out
+
+
 def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
                        min_gap_sec=2.5, tail_sec=1.0, head_sec=0.0):
     """Find regions of audio content in a WAV file.
@@ -229,48 +272,60 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
     frame_bytes = n_ch * bps
 
     window_frames = int(sr * window_sec)
-    rms_values = []
+    rms_values = None
 
-    with open(str(wav_path), "rb") as f:
-        f.seek(hdr["data_offset"])
-        pos = 0
-        while pos < n_frames:
-            count = min(window_frames, n_frames - pos)
-            raw = f.read(count * frame_bytes)
-            if not raw:
-                break
-            if is_float and bps == 4:
-                floats = _struct.unpack("<" + "f" * (len(raw) // 4), raw)
-                sum_sq = sum(v * v for v in floats)
-                n_samples = len(floats)
-            elif bps == 3:
-                sum_sq = 0.0
-                n_samples = 0
-                for k in range(0, len(raw) - 2, 3):
-                    v = raw[k] | (raw[k + 1] << 8) | (raw[k + 2] << 16)
-                    if v >= 0x800000:
-                        v -= 0x1000000
-                    sum_sq += v * v
-                    n_samples += 1
-            elif bps == 2:
-                shorts = _struct.unpack("<" + "h" * (len(raw) // 2), raw)
-                sum_sq = sum(v * v for v in shorts)
-                n_samples = len(shorts)
-            else:
-                n_samples = 0
-                sum_sq = 0.0
+    # Fast path: read all samples and compute per-window RMS in numpy.
+    if _np is not None:
+        try:
+            with open(str(wav_path), "rb") as f:
+                f.seek(hdr["data_offset"])
+                raw_all = f.read(n_frames * frame_bytes)
+            rms_values = _rms_windows_np(raw_all, n_ch, bps, is_float, window_frames)
+        except Exception:  # noqa: BLE001 — fall back to the stdlib loop
+            rms_values = None
 
-            if n_samples > 0:
-                rms = _math.sqrt(sum_sq / n_samples)
-                if is_float:
-                    rms_db = 20 * _math.log10(rms) if rms > 0 else -120.0
+    if not rms_values:
+        rms_values = []
+        with open(str(wav_path), "rb") as f:
+            f.seek(hdr["data_offset"])
+            pos = 0
+            while pos < n_frames:
+                count = min(window_frames, n_frames - pos)
+                raw = f.read(count * frame_bytes)
+                if not raw:
+                    break
+                if is_float and bps == 4:
+                    floats = _struct.unpack("<" + "f" * (len(raw) // 4), raw)
+                    sum_sq = sum(v * v for v in floats)
+                    n_samples = len(floats)
+                elif bps == 3:
+                    sum_sq = 0.0
+                    n_samples = 0
+                    for k in range(0, len(raw) - 2, 3):
+                        v = raw[k] | (raw[k + 1] << 8) | (raw[k + 2] << 16)
+                        if v >= 0x800000:
+                            v -= 0x1000000
+                        sum_sq += v * v
+                        n_samples += 1
+                elif bps == 2:
+                    shorts = _struct.unpack("<" + "h" * (len(raw) // 2), raw)
+                    sum_sq = sum(v * v for v in shorts)
+                    n_samples = len(shorts)
                 else:
-                    max_val = 2 ** (bps * 8 - 1)
-                    rms_db = 20 * _math.log10(rms / max_val) if rms > 0 else -120.0
-            else:
-                rms_db = -120.0
-            rms_values.append(rms_db)
-            pos += window_frames
+                    n_samples = 0
+                    sum_sq = 0.0
+
+                if n_samples > 0:
+                    rms = _math.sqrt(sum_sq / n_samples)
+                    if is_float:
+                        rms_db = 20 * _math.log10(rms) if rms > 0 else -120.0
+                    else:
+                        max_val = 2 ** (bps * 8 - 1)
+                        rms_db = 20 * _math.log10(rms / max_val) if rms > 0 else -120.0
+                else:
+                    rms_db = -120.0
+                rms_values.append(rms_db)
+                pos += window_frames
 
     peak_rms = max(rms_values) if rms_values else -120.0
     threshold_db = peak_rms - headroom_db
