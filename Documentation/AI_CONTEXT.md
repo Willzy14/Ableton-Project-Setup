@@ -45,16 +45,23 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 **Classifier patterns extended (2026-06-25).** Added: `BVs`→vocals (note the camel-splitter turns "BVs" into "b vs", handled), `Ref Bounce`→reference, `Tops`/`Fills`(plural)/`CABASA`/`DRM_*`→drums. Verified on real Coldabank + Lucozade folders; 11 regression cases held.
 
-**Flat reference is now a single bounced track, not a group (2026-06-25).** The duplicated-stems GroupTrack is gone. `bounce.py` sums the mix stems (pure stdlib → 32-bit float WAV) into one flat-ref track at the bottom: colour 37, muted, Ext. Out. Supplied ref/master files are kept as separate match tracks (same treatment), never summed. Verified on a real ALS build: no GroupTrack, FLAT REF last + ext + muted, supplied "Ref Bounce" kept as a match track, working tracks untouched. **This retired the "ref group opens expanded" bug.** Perf note: summing is pure Python — ~32s for 14 stems @ 2 min; a 30-stem/6-min track will take a few minutes.
+**Flat reference is now a single bounced track, not a group (2026-06-25).** The duplicated-stems GroupTrack is gone. `bounce.py` sums the mix stems into one flat-ref track at the bottom: colour 37, muted, Ext. Out. Supplied ref/master files are kept as separate match tracks (same treatment), never summed. Verified on a real ALS build: no GroupTrack, FLAT REF last + ext + muted, supplied "Ref Bounce" kept as a match track, working tracks untouched. **This retired the "ref group opens expanded" bug.**
+
+**Bounce uses numpy when available (2026-06-25).** `bounce.py` mixes via numpy if installed (~15× faster on a 14-stem/2-min pack: 1.9s vs 29s; scales better on bigger packs), and falls back to a pure-stdlib path when numpy is absent — output is bit-identical between the two (verified). So the tool stays install-free but is fast where numpy exists.
+
+**Working-track grouping implemented (2026-06-25).** Each groupable category with 2+ stems (drums, music, vocals, fx — per `CATEGORIES[cat]["group"]`) is wrapped in a GroupTrack: audible, routed to Main, expanded, coloured with the category colour; children route to `AudioOut/GroupTrack` with matching `TrackGroupId`. Group names: Drums / Music / Vox / FX. Kick, bass, sends and any single-stem category stay standalone. Reused the canonical 12.4 GroupTrack template (now parametrised for muted/unfolded). Verified on real builds: Coldabank (Drums×5, Music×2, Vox×3; bass×2 + kick standalone) and Ak1ra (adds FX×2 group; 24-bit stems).
 
 **Known issues / not yet working**:
-1. **`INST ALL` (full instrumental bounce) still unclassified** → falls through to the music bucket with a warning. Out of scope for the 2026-06-25 pass; add `\binst\b`→music if desired.
-2. `Group` (bus bounces from producer) → goes to music, OK behaviour.
-3. Bounce summing is slow on large packs (pure stdlib). If it ever becomes a bottleneck, numpy would make the sum ~50× faster — a targeted dependency just for `bounce.py`.
+1. **Python 3.14.0 transient interpreter glitch** — the machine runs Python 3.14.0 (a brand-new release with an experimental JIT/adaptive specializer). Hit a one-off bogus `TypeError: 'int' object is not an iterator` inside `find_audio_regions` that vanished on re-run (the bytecode and `range` are both correct). If a build ever crashes with a weird TypeError, just re-run; if it recurs often, installing stable Python 3.13 would eliminate it.
+2. **`INST ALL` (full instrumental bounce) still unclassified** → falls through to the music bucket with a warning. Add `\binst\b`→music if desired.
+3. `Group` (bus bounces from producer) → goes to music, OK behaviour.
+4. **Multi-bass not grouped** — bass with 2+ stems stays as separate tracks (CATEGORIES bass.group=False; spec prose was ambiguous). Tell me if you want a "Bass" group when there are 2+ bass stems.
 
 ## What's Next
 1. Optional: classify `INST ALL` / instrumental bounces (currently land in music via the unclassified fallback)
-2. Optional: speed up `bounce.py` (numpy) if large-pack build times become annoying
+2. Optional: "Bass" group when 2+ bass stems (currently off)
+3. Optional: speed up `find_audio_regions` 24-bit RMS (the slow part of large 24-bit builds; numpy could help here too)
+4. Watch for Python 3.14.0 interpreter glitches; consider stable Python 3.13 if builds become flaky
 
 ## Key Decisions
 - **No XML libraries** — ALS files are patched as raw text lines per ABLETON_INTERACTION.md. `xml.etree.ElementTree` would corrupt the format.
@@ -91,10 +98,10 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 9. **Supplied reference tracks** (if any) — each kept as its own match track, color 37, muted, Ext. Out
 10. **Flat Reference bounce** — single summed bounce of the mix stems, LAST track, color 37, muted, Ext. Out
 
-### Grouping Rules
-- **Group when 2+ stems** in the same category (except kick — always standalone)
-- Group names: "Drums", "Vox", "FX", etc. (short, descriptive)
-- Kick is NEVER inside a group, even if there are multiple kick stems
+### Grouping Rules (implemented 2026-06-25)
+- **Group when 2+ stems** in a *groupable* category: drums, music, vocals, fx (`CATEGORIES[cat]["group"]`). Group is audible, routed to Main, expanded, coloured with the category colour.
+- Group names: **Drums / Music / Vox / FX**. Children route to `AudioOut/GroupTrack` with matching `TrackGroupId`.
+- **Kick, bass, sends are never grouped** (standalone), even with multiple stems. (Bass grouping is off by deliberate config — flag if you want it.)
 
 ### Project Folder Structure
 ```

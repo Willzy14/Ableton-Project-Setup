@@ -125,6 +125,18 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
         s["clip_name"] = s["file_path"].stem   # clip label = original source filename
         s["name"] = s["display_name"]          # track label = simplified display name
 
+    # Tag groupable categories (2+ stems) so patch_project wraps them in a
+    # GroupTrack. kick/bass/sends never group (CATEGORIES[cat]["group"] is False).
+    group_names = {"drums": "Drums", "music": "Music", "vocals": "Vox", "fx": "FX"}
+    cat_counts = {}
+    for s in stems:
+        cat_counts[s["category"]] = cat_counts.get(s["category"], 0) + 1
+    for s in stems:
+        cat = s["category"]
+        if CATEGORIES[cat]["group"] and cat_counts[cat] >= 2:
+            s["group_key"] = cat
+            s["group_name"] = group_names.get(cat, cat.title())
+
     # --- Reference tracks at the bottom -------------------------------------
     # Always print our own flat bounce of the mix stems (a supplied "ref"/
     # "riff"/master file can't be trusted to equal the stem sum). Supplied

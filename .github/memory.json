@@ -26,7 +26,7 @@
     },
     {
       "date": "2026-06-25",
-      "summary": "Three features: (1) pure-stdlib BPM auto-detection (Source/bpm_detector.py) borrowed from Automated DJ Mixes (attack_onsets + lattice_fit), no numpy/scipy/Demucs; bpm arg now optional, detects from kick; validated exact on 4 kicks. (2) Clip naming — track=display, clip=original filename. (3) Classifier patterns BVs/Tops/Fills/CABASA/DRM_/Ref Bounce. (4) Replaced duplicated-stems flat-reference GroupTrack with a single bounced flat-ref track (Source/bounce.py, pure-stdlib stem sum -> float32 WAV): color 37, muted, Ext. Out, last; supplied ref/master files kept as separate match tracks, never summed. Retired the ref-group-expand bug.",
+      "summary": "Three features: (1) pure-stdlib BPM auto-detection (Source/bpm_detector.py) borrowed from Automated DJ Mixes (attack_onsets + lattice_fit), no numpy/scipy/Demucs; bpm arg now optional, detects from kick; validated exact on 4 kicks. (2) Clip naming — track=display, clip=original filename. (3) Classifier patterns BVs/Tops/Fills/CABASA/DRM_/Ref Bounce. (4) Replaced duplicated-stems flat-reference GroupTrack with a single bounced flat-ref track (Source/bounce.py, pure-stdlib stem sum -> float32 WAV): color 37, muted, Ext. Out, last; supplied ref/master files kept as separate match tracks, never summed. Retired the ref-group-expand bug. (5) Working-track grouping: drums/music/vocals/fx with 2+ stems wrapped in a GroupTrack (audible, Main, expanded, category-coloured; children -> AudioOut/GroupTrack + TrackGroupId); kick/bass/sends standalone. (6) bounce.py numpy fast path (~15x) with bit-identical pure-stdlib fallback.",
       "files_changed": [
         "Source/bpm_detector.py",
         "Source/bounce.py",
@@ -38,7 +38,9 @@
       ],
       "pending": [
         "Optional: classify INST ALL / instrumental bounces (currently land in music via fallback)",
-        "Optional: speed up bounce.py with numpy if large-pack build times become annoying"
+        "Optional: 'Bass' group when 2+ bass stems (currently off)",
+        "Optional: speed up find_audio_regions 24-bit RMS (slow part of large 24-bit builds)",
+        "Watch Python 3.14.0 interpreter glitches; stable 3.13 if builds become flaky"
       ]
     }
   ],
@@ -57,6 +59,11 @@
       "date": "2026-06-25",
       "decision": "Flat reference is always our own pure-stdlib bounce (sum of mix stems), never a supplied 'ref'/'riff'/master file. Single track at the bottom, color 37, muted, routed to Ext. Out. Supplied references kept as separate match tracks. No GroupTrack.",
       "why": "A supplied ref file can't be trusted to equal the stem sum (may be another artist's track or a limited master); verifying it would require bouncing the sum anyway, so always print our own. Single track + Ext. Out bypasses the master chain and retires the long-standing 'ref group opens expanded' bug."
+    },
+    {
+      "date": "2026-06-25",
+      "decision": "bounce.py uses numpy when installed (optional import) with a pure-stdlib fallback; both paths verified bit-identical. Working groups coloured with the category colour (not 37); group names Drums/Music/Vox/FX. Bass never grouped.",
+      "why": "Optional numpy keeps the tool install-free yet ~15x faster where numpy exists. Category-coloured group headers read at a glance. Bass-standalone matches Sam's track-order spec."
     }
   ]
 }

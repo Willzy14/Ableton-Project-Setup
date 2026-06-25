@@ -124,15 +124,33 @@ def set_track_output_external(lines, track):
                 lines[i] = re.sub(r'Value="[^"]*"', 'Value="1/2"', lines[i])
 
 
-def set_track_muted(lines, track):
-    """Mute a track (Speaker/Manual=false) — the in-mixer 'track off' state."""
+def set_track_muted(lines, track, muted=True):
+    """Set a track's Speaker (mixer on/off). muted=True -> Manual=false (off)."""
+    val = "false" if muted else "true"
     in_spk = False
     for i in range(track["start"], track["end"] + 1):
         if "<Speaker>" in lines[i]:
             in_spk = True
         elif in_spk and "<Manual Value=" in lines[i]:
-            lines[i] = re.sub(r'Value="[^"]*"', 'Value="false"', lines[i])
+            lines[i] = re.sub(r'Value="[^"]*"', 'Value="' + val + '"', lines[i])
             break
+
+
+def set_track_output_group(lines, track):
+    """Route a track's audio output to its parent group (AudioOut/GroupTrack)."""
+    in_block = False
+    for i in range(track["start"], track["end"] + 1):
+        if "<AudioOutputRouting>" in lines[i]:
+            in_block = True
+        elif "</AudioOutputRouting>" in lines[i]:
+            break
+        elif in_block:
+            if "<Target Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value="AudioOut/GroupTrack"', lines[i])
+            elif "<UpperDisplayString Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value="Group"', lines[i])
+            elif "<LowerDisplayString Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value=""', lines[i])
 
 
 CLIP_START_BEATS = 128  # bar 33 in 4/4
@@ -541,7 +559,7 @@ _GROUP_TRACK_TEMPLATE = '''\t\t\t<GroupTrack Id="{GID}" SelectedToolPanel="7" Se
 \t\t\t\t\t<Envelopes />
 \t\t\t\t</AutomationEnvelopes>
 \t\t\t\t<TrackGroupId Value="-1" />
-\t\t\t\t<TrackUnfolded Value="false" />
+\t\t\t\t<TrackUnfolded Value="{UNFOLDED}" />
 \t\t\t\t<DevicesListWrapper LomId="0" />
 \t\t\t\t<ClipSlotsListWrapper LomId="0" />
 \t\t\t\t<ArrangementClipsListWrapper LomId="0" />
@@ -677,7 +695,7 @@ _GROUP_TRACK_TEMPLATE = '''\t\t\t<GroupTrack Id="{GID}" SelectedToolPanel="7" Se
 \t\t\t\t\t\t<Sends />
 \t\t\t\t\t\t<Speaker>
 \t\t\t\t\t\t\t<LomId Value="0" />
-\t\t\t\t\t\t\t<Manual Value="false" />
+\t\t\t\t\t\t\t<Manual Value="{SPK_ON}" />
 \t\t\t\t\t\t\t<AutomationTarget Id="{ID_SPK}">
 \t\t\t\t\t\t\t\t<LockEnvelope Value="0" />
 \t\t\t\t\t\t\t</AutomationTarget>
@@ -845,16 +863,19 @@ _GROUP_TRACK_TEMPLATE = '''\t\t\t<GroupTrack Id="{GID}" SelectedToolPanel="7" Se
 
 
 def insert_group_track(lines, insert_before_line, group_name, group_id,
-                       color=14, num_scenes=8):
+                       color=14, num_scenes=8, muted=True, unfolded=False):
     """Insert a properly-structured GroupTrack matching Ableton 12.4 format.
 
-    Muted (Speaker=false), routed to Main, collapsed (TrackUnfolded=false).
+    Routed to Main. `muted` sets the Speaker (False = audible, for working
+    submix groups; True = muted). `unfolded` sets expanded (True) vs collapsed.
     Returns the number of lines inserted.
     """
     block = _GROUP_TRACK_TEMPLATE.format(
         GID=group_id,
         NAME=_xml_escape(group_name),
         COLOR=color,
+        SPK_ON="false" if muted else "true",
+        UNFOLDED="true" if unfolded else "false",
         ID_MIX_ON=_alloc_id(),
         ID_MIX_POINTEE=_alloc_id(),
         ID_SPK=_alloc_id(),
@@ -1072,6 +1093,43 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir):
             if tidx < len(audio_ref):
                 set_track_output_external(lines, audio_ref[tidx])
                 set_track_muted(lines, audio_ref[tidx])
+
+    # Working-track groups: wrap each groupable category with 2+ stems in a
+    # GroupTrack (audible, routed to Main, expanded). Children route into it.
+    # group_key/group_name are tagged on the working stems by project_builder.
+    runs = []
+    i = 0
+    while i < len(stems):
+        gk = stems[i].get("group_key")
+        if gk:
+            j = i
+            while j < len(stems) and stems[j].get("group_key") == gk:
+                j += 1
+            runs.append({
+                "name": stems[i].get("group_name", "Group"),
+                "color": stems[i]["color"],
+                "indices": list(range(i, j)),
+            })
+            i = j
+        else:
+            i += 1
+
+    # Insert bottom-to-top so earlier (higher) runs keep their line positions.
+    for run in reversed(runs):
+        group_id = _alloc_id()
+        audio_g = [t for t in find_track_ranges(lines) if t["type"] == "AudioTrack"]
+        for si in run["indices"]:
+            tidx = si + 1
+            if tidx < len(audio_g):
+                set_track_group_id(lines, audio_g[tidx], group_id)
+                set_track_output_group(lines, audio_g[tidx])
+        audio_g = [t for t in find_track_ranges(lines) if t["type"] == "AudioTrack"]
+        first_tidx = run["indices"][0] + 1
+        if first_tidx < len(audio_g):
+            insert_group_track(
+                lines, audio_g[first_tidx]["start"], run["name"], group_id,
+                color=run["color"], muted=False, unfolded=True,
+            )
 
     tracks_to_remove = []
     all_tracks = find_track_ranges(lines)
