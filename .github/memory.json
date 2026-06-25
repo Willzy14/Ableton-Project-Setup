@@ -57,13 +57,13 @@
     },
     {
       "date": "2026-06-25",
-      "decision": "Flat reference is always our own pure-stdlib bounce (sum of mix stems), never a supplied 'ref'/'riff'/master file. Single track at the bottom, color 37, muted, routed to Ext. Out. Supplied references kept as separate match tracks. No GroupTrack.",
+      "decision": "Flat reference is always our own bounce (sum of mix stems), never a supplied 'ref'/'riff'/master file. Single track at the bottom, color 14 (red), muted, routed to Ext. Out. Supplied references kept as separate match tracks (also red). No GroupTrack.",
       "why": "A supplied ref file can't be trusted to equal the stem sum (may be another artist's track or a limited master); verifying it would require bouncing the sum anyway, so always print our own. Single track + Ext. Out bypasses the master chain and retires the long-standing 'ref group opens expanded' bug."
     },
     {
       "date": "2026-06-25",
-      "decision": "bounce.py uses numpy when installed (optional import) with a pure-stdlib fallback; both paths verified bit-identical. Working groups coloured with the category colour (not 37); group names Drums/Music/Vox/FX. Bass never grouped.",
-      "why": "Optional numpy keeps the tool install-free yet ~15x faster where numpy exists. Category-coloured group headers read at a glance. Bass-standalone matches Sam's track-order spec."
+      "decision": "bounce.py uses numpy when installed (optional import) with a pure-stdlib fallback; both paths verified bit-identical. Working groups coloured with the category colour; group names Drums/Bass/Music/Vox/FX (bass IS grouped per Sam 2026-06-25). Reference tracks coloured red (14). Silence trim retuned tighter (headroom 55dB / window 0.1s / min-gap 2.5s / tail 1s) so clips hug audio without chopping decays.",
+      "why": "Optional numpy keeps the tool install-free yet ~15x faster where numpy exists. Category-coloured group headers read at a glance. Sam asked for red refs, bass grouping, and tighter silence trimming after seeing the first demo."
     }
   ]
 }

@@ -19,8 +19,8 @@ from bounce import sum_stems_to_wav
 TEMPLATE_PATH = Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates\Ableton Project Set Up 250 Tracks.als")
 
 # Colour for the reference tracks at the bottom (flat bounce + any supplied
-# ref/master). 37 matches Sam's real projects' reference/master tracks.
-REF_TRACK_COLOR = 37
+# ref/master). 14 = red — Sam wants the reference tracks red.
+REF_TRACK_COLOR = 14
 OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\0.1---GIT HUB---\Ableton Project Setup")
 
 
@@ -110,7 +110,9 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
             dest = audio_folder / f.name
             if not dest.exists():
                 shutil.copy2(f, dest)
-            regions = find_audio_regions(dest, head_sec=3.0 if cat == "fx" else 0.0)
+            # FX (risers/uplifters build from near-silence) get a lead-in so
+            # the ramp isn't trimmed; everything else trims tight at the front.
+            regions = find_audio_regions(dest, head_sec=2.0 if cat == "fx" else 0.0)
             stems.append({
                 "name": f.stem,
                 "category": cat,
@@ -127,7 +129,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
 
     # Tag groupable categories (2+ stems) so patch_project wraps them in a
     # GroupTrack. kick/bass/sends never group (CATEGORIES[cat]["group"] is False).
-    group_names = {"drums": "Drums", "music": "Music", "vocals": "Vox", "fx": "FX"}
+    group_names = {"drums": "Drums", "bass": "Bass", "music": "Music",
+                   "vocals": "Vox", "fx": "FX"}
     cat_counts = {}
     for s in stems:
         cat_counts[s["category"]] = cat_counts.get(s["category"], 0) + 1

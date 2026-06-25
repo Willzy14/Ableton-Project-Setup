@@ -204,14 +204,17 @@ def get_wav_info(wav_path):
     return hdr["n_frames"], hdr["rate"], file_size
 
 
-def find_audio_regions(wav_path, headroom_db=40, window_sec=0.25,
-                       min_gap_sec=10.0, tail_sec=3.0, head_sec=0.0):
+def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
+                       min_gap_sec=2.5, tail_sec=1.0, head_sec=0.0):
     """Find regions of audio content in a WAV file.
 
-    Uses an adaptive threshold: peak_rms - headroom_db, so quiet stems
-    keep their content. Adjacent active windows separated by less than
-    min_gap_sec are merged into one region. Returns a list of
-    (start_sec, end_sec) tuples.
+    Uses an adaptive threshold: peak_rms - headroom_db. A wide headroom (55 dB)
+    keeps the region alive through quiet decays — reverb/crash/fill tails are
+    followed down rather than chopped — so clips hug the audio tightly while a
+    small tail_sec safety margin catches the very end. Active windows separated
+    by less than min_gap_sec are merged into one region (so a continuous groove
+    stays one clip; real silence >min_gap splits into tight separate clips).
+    Returns a list of (start_sec, end_sec) tuples.
     """
     import struct as _struct
     import math as _math

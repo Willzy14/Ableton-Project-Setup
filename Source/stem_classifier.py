@@ -13,7 +13,7 @@ from pathlib import Path
 CATEGORIES = {
     "kick": {"color": 6, "order": 1, "group": False},
     "drums": {"color": 6, "order": 2, "group": True},
-    "bass": {"color": 24, "order": 3, "group": False},
+    "bass": {"color": 24, "order": 3, "group": True},
     "music": {"color": 8, "order": 4, "group": True},
     "vocals": {"color": 13, "order": 5, "group": True},
     "fx": {"color": 55, "order": 6, "group": True},

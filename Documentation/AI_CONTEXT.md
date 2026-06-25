@@ -45,21 +45,23 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 **Classifier patterns extended (2026-06-25).** Added: `BVs`→vocals (note the camel-splitter turns "BVs" into "b vs", handled), `Ref Bounce`→reference, `Tops`/`Fills`(plural)/`CABASA`/`DRM_*`→drums. Verified on real Coldabank + Lucozade folders; 11 regression cases held.
 
-**Flat reference is now a single bounced track, not a group (2026-06-25).** The duplicated-stems GroupTrack is gone. `bounce.py` sums the mix stems into one flat-ref track at the bottom: colour 37, muted, Ext. Out. Supplied ref/master files are kept as separate match tracks (same treatment), never summed. Verified on a real ALS build: no GroupTrack, FLAT REF last + ext + muted, supplied "Ref Bounce" kept as a match track, working tracks untouched. **This retired the "ref group opens expanded" bug.**
+**Flat reference is now a single bounced track, not a group (2026-06-25).** The duplicated-stems GroupTrack is gone. `bounce.py` sums the mix stems into one flat-ref track at the bottom: colour 14 (red), muted, Ext. Out. Supplied ref/master files are kept as separate match tracks (same treatment), never summed. Verified on a real ALS build: no GroupTrack, FLAT REF last + ext + muted, supplied "Ref Bounce" kept as a match track, working tracks untouched. **This retired the "ref group opens expanded" bug.**
+
+**Tighter silence trimming + bass grouping + red refs (2026-06-25, Sam feedback).** Reference tracks recoloured red (14, was 37). Bass is now groupable (a "Bass" group when 2+ bass stems). `find_audio_regions` retuned to hug the audio tighter without chopping tails: window 0.25→0.1 s, headroom 40→55 dB (a wide threshold follows reverb/crash/fill decays down so they're never cut), min-gap 10→2.5 s (real silence splits into tight separate clips), tail 3→1 s. FX keep a 2 s lead-in for risers.
 
 **Bounce uses numpy when available (2026-06-25).** `bounce.py` mixes via numpy if installed (~15× faster on a 14-stem/2-min pack: 1.9s vs 29s; scales better on bigger packs), and falls back to a pure-stdlib path when numpy is absent — output is bit-identical between the two (verified). So the tool stays install-free but is fast where numpy exists.
 
-**Working-track grouping implemented (2026-06-25).** Each groupable category with 2+ stems (drums, music, vocals, fx — per `CATEGORIES[cat]["group"]`) is wrapped in a GroupTrack: audible, routed to Main, expanded, coloured with the category colour; children route to `AudioOut/GroupTrack` with matching `TrackGroupId`. Group names: Drums / Music / Vox / FX. Kick, bass, sends and any single-stem category stay standalone. Reused the canonical 12.4 GroupTrack template (now parametrised for muted/unfolded). Verified on real builds: Coldabank (Drums×5, Music×2, Vox×3; bass×2 + kick standalone) and Ak1ra (adds FX×2 group; 24-bit stems).
+**Working-track grouping implemented (2026-06-25).** Each groupable category with 2+ stems (drums, music, vocals, fx — per `CATEGORIES[cat]["group"]`) is wrapped in a GroupTrack: audible, routed to Main, expanded, coloured with the category colour; children route to `AudioOut/GroupTrack` with matching `TrackGroupId`. Group names: Drums / Bass / Music / Vox / FX. Kick, sends and any single-stem category stay standalone. Reused the canonical 12.4 GroupTrack template (now parametrised for muted/unfolded). Verified on real builds: Coldabank (Bass×2, Drums×5, Music×2, Vox×3; kick standalone) and Ak1ra (adds FX×2 group; 24-bit stems).
 
 **Known issues / not yet working**:
 1. **Python 3.14.0 transient interpreter glitch** — the machine runs Python 3.14.0 (a brand-new release with an experimental JIT/adaptive specializer). Hit a one-off bogus `TypeError: 'int' object is not an iterator` inside `find_audio_regions` that vanished on re-run (the bytecode and `range` are both correct). If a build ever crashes with a weird TypeError, just re-run; if it recurs often, installing stable Python 3.13 would eliminate it.
 2. **`INST ALL` (full instrumental bounce) still unclassified** → falls through to the music bucket with a warning. Add `\binst\b`→music if desired.
 3. `Group` (bus bounces from producer) → goes to music, OK behaviour.
-4. **Multi-bass not grouped** — bass with 2+ stems stays as separate tracks (CATEGORIES bass.group=False; spec prose was ambiguous). Tell me if you want a "Bass" group when there are 2+ bass stems.
+4. **Silence-trim tuning is iteration 1** — new values (headroom 55 / min-gap 2.5 / tail 1.0) hug tighter; needs Sam's eye on a few real packs to confirm nothing audible is chopped and it's tight enough.
 
 ## What's Next
-1. Optional: classify `INST ALL` / instrumental bounces (currently land in music via the unclassified fallback)
-2. Optional: "Bass" group when 2+ bass stems (currently off)
+1. Sam to eyeball the Test Builds projects in Ableton — confirm trim tightness + nothing chopped; adjust find_audio_regions params if needed
+2. Optional: classify `INST ALL` / instrumental bounces (currently land in music via the unclassified fallback)
 3. Optional: speed up `find_audio_regions` 24-bit RMS (the slow part of large 24-bit builds; numpy could help here too)
 4. Watch for Python 3.14.0 interpreter glitches; consider stable Python 3.13 if builds become flaky
 
@@ -69,7 +71,8 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 - **BPM from percussion** — kick or snare is the most reliable BPM source. Global tempo is set from this.
 - **Template-based approach** — start from a known-good ALS file saved by Ableton, patch in stems dynamically.
 - **Track AND clip colours match** — both set to the same palette index per category (6/24/8/13/55/17/14). Sam's existing projects only had clip colours set, but the tool now sets both for consistency.
-- **Flat reference track (2026-06-25, replaced the group)** — instead of duplicating every stem into a summing group, the tool now prints a single **flat bounce** of the mix stems (pure-stdlib sum → 32-bit float WAV, [bounce.py](Source/bounce.py)) as one track at the very bottom: colour 37, muted, output routed to **Ext. Out** (bypasses the master chain). A supplied "ref"/"riff"/master file is NEVER trusted to be the flat sum (it may be someone else's track or a limited master) — we always print our own bounce, and keep any supplied reference as its own match track (same colour 37 / muted / Ext. Out treatment). This also retired the long-standing "ref group opens expanded" bug — there is no group any more.
+- **Flat reference track (2026-06-25, replaced the group)** — instead of duplicating every stem into a summing group, the tool now prints a single **flat bounce** of the mix stems (sum → 32-bit float WAV, [bounce.py](Source/bounce.py); numpy fast path + stdlib fallback) as one track at the very bottom: colour 14 (red), muted, output routed to **Ext. Out** (bypasses the master chain). A supplied "ref"/"riff"/master file is NEVER trusted to be the flat sum (it may be someone else's track or a limited master) — we always print our own bounce, and keep any supplied reference as its own match track (same red / muted / Ext. Out treatment). This also retired the long-standing "ref group opens expanded" bug — there is no group any more.
+- **Working-track grouping (2026-06-25)** — groupable categories (drums, bass, music, vocals, fx) with 2+ stems get a GroupTrack coloured with the category colour, audible, routed to Main, expanded; children route to `AudioOut/GroupTrack`. Kick and sends never group. Group/child structure mirrors Sam's real finished projects.
 - **Session Time track** — always first, has HOFA Project Time plugin, tracks time spent on each project. Must be in every project (comes from template).
 - **Send stems are from producers** — reverb, delay, chorus stems are part of the stem pack, not created by Sam. Tool needs to classify and place them.
 
@@ -84,24 +87,24 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 | 13 | Vocals | vocal, vox, acapella, voice, singing, lead vx, backing, harmony |
 | 55 | FX | fx, effect, riser, impact, sweep, noise, texture, atmosphere, ambient, vinyl, downlifter |
 | 17 | Sends | reverb, delay, chorus, echo (when provided as stems from the producer) |
-| 37 | Reference tracks | flat bounce + any supplied ref/master; muted, routed to Ext. Out, at the bottom |
+| 14 | Reference tracks (red) | flat bounce + any supplied ref/master; muted, routed to Ext. Out, at the bottom |
 
 ### Track Order
 1. **Session Time** — always first, track color 27, HOFA Project Time plugin, no audio
 2. **Kick** — standalone, never grouped, clip color 6
 3. **Drums** — hats, snares, claps, perc — grouped when multiple stems, clip color 6
-4. **Bass** — standalone, clip color 24
+4. **Bass** — grouped when multiple stems (else standalone), clip color 24
 5. **Music** — synths, chords, keys, pads, strings, instruments — clip color 8
 6. **Vocals** — grouped when multiple, clip color 13
 7. **FX** — grouped when multiple, clip color 55
 8. **Sends** — reverb/delay stems if provided, clip color 17
-9. **Supplied reference tracks** (if any) — each kept as its own match track, color 37, muted, Ext. Out
-10. **Flat Reference bounce** — single summed bounce of the mix stems, LAST track, color 37, muted, Ext. Out
+9. **Supplied reference tracks** (if any) — each kept as its own match track, color 14 (red), muted, Ext. Out
+10. **Flat Reference bounce** — single summed bounce of the mix stems, LAST track, color 14 (red), muted, Ext. Out
 
 ### Grouping Rules (implemented 2026-06-25)
-- **Group when 2+ stems** in a *groupable* category: drums, music, vocals, fx (`CATEGORIES[cat]["group"]`). Group is audible, routed to Main, expanded, coloured with the category colour.
-- Group names: **Drums / Music / Vox / FX**. Children route to `AudioOut/GroupTrack` with matching `TrackGroupId`.
-- **Kick, bass, sends are never grouped** (standalone), even with multiple stems. (Bass grouping is off by deliberate config — flag if you want it.)
+- **Group when 2+ stems** in a *groupable* category: drums, bass, music, vocals, fx (`CATEGORIES[cat]["group"]`). Group is audible, routed to Main, expanded, coloured with the category colour.
+- Group names: **Drums / Bass / Music / Vox / FX**. Children route to `AudioOut/GroupTrack` with matching `TrackGroupId`.
+- **Kick and sends are never grouped** (standalone), even with multiple stems.
 
 ### Project Folder Structure
 ```
