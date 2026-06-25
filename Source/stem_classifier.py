@@ -23,6 +23,8 @@ CATEGORIES = {
 KICK_PATTERNS = [
     r"\bkick",
     r"\bkik\b",
+    r"\bkck\b",
+    r"\bk\b",
     r"\bbd\b",
     r"\bbdrum",
     r"\bbass.?drum",
@@ -159,6 +161,9 @@ REFERENCE_PATTERNS = [
     r"\boriginal.?mix",
     r"\breference",
     r"\bref.?bounce",
+    r"\btest.?mix",
+    r"\brough.?mix",
+    r"\bscratch.?mix",
     r"\bmaster\b",
     r"\bflat.?mix",
     r"\bpre.?master",

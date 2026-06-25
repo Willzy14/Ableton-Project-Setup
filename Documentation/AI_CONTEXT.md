@@ -16,9 +16,11 @@ Part of the samwillsmixing.com ecosystem — speeds up the most repetitive part 
 ```
 Ableton Project Setup/
   Source/                    # Main Python code
-    als_patcher.py           # Template patching engine
-    stem_classifier.py       # Stem name → track type mapping
-    bpm_detector.py          # BPM detection from audio
+    als_patcher.py           # Template patching engine + silence/region detection
+    stem_classifier.py       # Stem name → track type mapping (filename rules)
+    stem_analysis.py         # Audio-content analysis (numpy) — full-mix detection
+    bpm_detector.py          # BPM detection from kick (pure stdlib)
+    bounce.py                # Flat-reference stem summing (numpy + stdlib fallback)
     project_builder.py       # Orchestrator — ties it all together
   Templates/                 # Reference ALS templates (Sam creates in Ableton)
   Documentation/             # AI context, specs, mix layout reference
@@ -49,21 +51,22 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 **Tighter silence trimming + bass grouping + red refs (2026-06-25, Sam feedback).** Reference tracks recoloured red (14, was 37). Bass is now groupable (a "Bass" group when 2+ bass stems). `find_audio_regions` retuned to hug the audio tighter without chopping tails: window 0.25→0.1 s, headroom 40→55 dB (a wide threshold follows reverb/crash/fill decays down so they're never cut), min-gap 10→2.5 s (real silence splits into tight separate clips), tail 3→1 s. FX keep a 2 s lead-in for risers.
 
+**Classifier hardening + audio-content analysis (2026-06-25).** A test batch of 5 random finished mixes exposed two real gaps on messy packs: (1) full mixes/masters named cryptically (e.g. "Current", "(TEST MIX)") were classified as music and **summed into the flat ref**, polluting it (Far Away bounce peaked 3.85); (2) a kick named just "K" wasn't recognised. Fixes: added filename patterns (`TEST MIX`/`ROUGH MIX`/`SCRATCH MIX`→reference; `K`/`KCK`→kick), and a new **`stem_analysis.py`** (numpy FFT) that, when a filename can't place a music/unclassified file, decides if the audio is a full mix and if so moves it to references (out of the sum). The full-mix rule — **crest ≤ 5 (mastered-loud) + 6+ active bands (broadband) + sustain ≥ 0.6** — was tuned against labelled real files and cleanly separated every real full mix (Ref Bounce, TEST MIX, SW Flat Mix, Far Away Master *and* Current) from every individual stem. Audio kick-detection was deliberately dropped (kick vs bass overlap too much; filenames handle it). Falls back to filename-only when numpy is absent.
+
 **Bounce uses numpy when available (2026-06-25).** `bounce.py` mixes via numpy if installed (~15× faster on a 14-stem/2-min pack: 1.9s vs 29s; scales better on bigger packs), and falls back to a pure-stdlib path when numpy is absent — output is bit-identical between the two (verified). So the tool stays install-free but is fast where numpy exists.
 
 **Working-track grouping implemented (2026-06-25).** Each groupable category with 2+ stems (drums, music, vocals, fx — per `CATEGORIES[cat]["group"]`) is wrapped in a GroupTrack: audible, routed to Main, expanded, coloured with the category colour; children route to `AudioOut/GroupTrack` with matching `TrackGroupId`. Group names: Drums / Bass / Music / Vox / FX. Kick, sends and any single-stem category stay standalone. Reused the canonical 12.4 GroupTrack template (now parametrised for muted/unfolded). Verified on real builds: Coldabank (Bass×2, Drums×5, Music×2, Vox×3; kick standalone) and Ak1ra (adds FX×2 group; 24-bit stems).
 
 **Known issues / not yet working**:
 1. **Python 3.14.0 transient interpreter glitch** — the machine runs Python 3.14.0 (a brand-new release with an experimental JIT/adaptive specializer). Hit a one-off bogus `TypeError: 'int' object is not an iterator` inside `find_audio_regions` that vanished on re-run (the bytecode and `range` are both correct). If a build ever crashes with a weird TypeError, just re-run; if it recurs often, installing stable Python 3.13 would eliminate it.
-2. **`INST ALL` (full instrumental bounce) still unclassified** → falls through to the music bucket with a warning. Add `\binst\b`→music if desired.
-3. `Group` (bus bounces from producer) → goes to music, OK behaviour.
-4. **Silence-trim tuning is iteration 1** — new values (headroom 55 / min-gap 2.5 / tail 1.0) hug tighter; needs Sam's eye on a few real packs to confirm nothing audible is chopped and it's tight enough.
+2. **Sub-group bounces (e.g. a drum "Group" bus) aren't caught by the full-mix detector** — they're not broadband enough to read as a full mix, so they stay in music and could double-count in the flat-ref sum (a drum bus summed on top of the individual drum stems). Lower impact than a full mix; revisit if it shows up audibly.
+3. **Silence-trim tuning is iteration 1** — values (headroom 55 / min-gap 2.5 / tail 1.0) hug tighter; needs Sam's eye to confirm nothing audible is chopped.
+4. **Python 3.14.0 transient interpreter glitch** — one-off bogus `TypeError` inside `find_audio_regions` that vanished on re-run; the per-build retry in the batch script absorbs it. If a real build crashes oddly, re-run; stable Python 3.13 would eliminate it.
 
 ## What's Next
-1. Sam to eyeball the Test Builds projects in Ableton — confirm trim tightness + nothing chopped; adjust find_audio_regions params if needed
-2. Optional: classify `INST ALL` / instrumental bounces (currently land in music via the unclassified fallback)
+1. Sam to eyeball the Test Builds projects in Ableton — confirm trim tightness, grouping, red refs, and that full mixes are out of the flat ref
+2. Optional: detect sub-group/bus bounces (drum "Group" etc.) to keep them out of the sum too
 3. Optional: speed up `find_audio_regions` 24-bit RMS (the slow part of large 24-bit builds; numpy could help here too)
-4. Watch for Python 3.14.0 interpreter glitches; consider stable Python 3.13 if builds become flaky
 
 ## Key Decisions
 - **No XML libraries** — ALS files are patched as raw text lines per ABLETON_INTERACTION.md. `xml.etree.ElementTree` would corrupt the format.

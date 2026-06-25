@@ -15,6 +15,7 @@ from stem_classifier import classify_stems, apply_track_names, CATEGORIES
 from als_patcher import patch_project, find_audio_regions
 from bpm_detector import detect_bpm
 from bounce import sum_stems_to_wav
+from stem_analysis import audio_label
 
 TEMPLATE_PATH = Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates\Ableton Project Set Up 250 Tracks.als")
 
@@ -76,6 +77,30 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
 
     print("Classifying stems...")
     classified, references, unclassified = classify_stems(stem_folder)
+
+    # Audio-content safety net (numpy): a file filenames couldn't place
+    # (music/unclassified) but that ANALYSES as a full mix / master / sub-bounce
+    # is moved to references — so it is kept OUT of the flat bounce (summing a
+    # whole mix into the reference would pollute it). No-op without numpy.
+    suspects = list(unclassified) + list(classified.get("music", []))
+    full_mixes = []
+    for f in suspects:
+        try:
+            if audio_label(f) == "full_mix":
+                full_mixes.append(f)
+        except Exception:  # noqa: BLE001 — a bad file shouldn't abort the build
+            pass
+    if full_mixes:
+        print("\nAudio analysis: these read as full mixes — kept OUT of the "
+              "flat-ref sum, placed as red reference tracks:")
+        for f in full_mixes:
+            print("  " + f.name)
+        references = list(references) + full_mixes
+        if "music" in classified:
+            classified["music"] = [f for f in classified["music"] if f not in full_mixes]
+            if not classified["music"]:
+                del classified["music"]
+        unclassified = [f for f in unclassified if f not in full_mixes]
 
     if unclassified:
         print("\nWARNING — unclassified stems (will be placed as music):")
