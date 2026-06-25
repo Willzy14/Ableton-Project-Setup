@@ -323,8 +323,14 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
 
 def _build_clip_xml(stem_name, clip_color, rel_path, abs_path, sample_count,
                     sample_rate, file_size, bpm, indent,
-                    loop_start_sec=0.0, loop_end_sec=None):
-    """Build AudioClip XML lines for a single stem."""
+                    loop_start_sec=0.0, loop_end_sec=None,
+                    base_start_beat=CLIP_START_BEATS):
+    """Build AudioClip XML lines for a single stem.
+
+    base_start_beat is the arrangement position (in beats) of bar 1 of this
+    clip's section — CLIP_START_BEATS (bar 33) for the primary version; later
+    versions pass a larger offset so they sit further down the timeline.
+    """
     clip_id = _alloc_id()
     take_id = _alloc_id()
     wm_id1 = _alloc_id()
@@ -343,8 +349,8 @@ def _build_clip_xml(stem_name, clip_color, rel_path, abs_path, sample_count,
     t3 = indent + "\t\t"
     t4 = indent + "\t\t\t"
 
-    clip_start = CLIP_START_BEATS + (loop_start_sec / 60.0) * bpm
-    clip_end = CLIP_START_BEATS + (loop_end_sec / 60.0) * bpm
+    clip_start = base_start_beat + (loop_start_sec / 60.0) * bpm
+    clip_end = base_start_beat + (loop_end_sec / 60.0) * bpm
 
     clip_lines = [
         t + '<AudioClip Id="' + str(clip_id) + '" Time="' + str(clip_start) + '">' + CRLF,
@@ -487,11 +493,14 @@ def _build_clip_xml(stem_name, clip_color, rel_path, abs_path, sample_count,
 
 def insert_clip_into_track(lines, track, stem_name, clip_color, rel_path,
                            abs_path, sample_count, sample_rate, file_size, bpm,
-                           regions=None):
+                           regions=None, base_start_beat=CLIP_START_BEATS):
     """Insert AudioClips into a track's MainSequencer Events block.
 
     regions is a list of (start_sec, end_sec) tuples. One clip per region.
-    Returns the number of lines inserted (needed to adjust subsequent track ranges).
+    base_start_beat offsets the clips down the arrangement (for later versions).
+    Can be called more than once on the same track — subsequent calls append
+    their clips into the now-open Events block (used to stack versions on one
+    track). Returns the number of lines inserted.
     """
     if regions is None:
         full_sec = sample_count / sample_rate
@@ -500,19 +509,23 @@ def insert_clip_into_track(lines, track, stem_name, clip_color, rel_path,
     start = track["start"]
     end = track["end"]
 
-    events_line = None
+    empty_line = open_line = close_line = None
     in_main_sequencer = False
     for i in range(start, end + 1):
         if "<MainSequencer>" in lines[i]:
             in_main_sequencer = True
-        if in_main_sequencer and "<Events />" in lines[i]:
-            events_line = i
-            break
-        if "</MainSequencer>" in lines[i]:
+        elif "</MainSequencer>" in lines[i]:
             in_main_sequencer = False
-
-    if events_line is None:
-        return 0
+        if not in_main_sequencer:
+            continue
+        if "<Events />" in lines[i]:
+            empty_line = i
+            break
+        if "<Events>" in lines[i] and open_line is None:
+            open_line = i
+        elif open_line is not None and "</Events>" in lines[i]:
+            close_line = i
+            break
 
     indent = "\t\t\t\t\t\t\t"
     all_clip_lines = []
@@ -520,17 +533,20 @@ def insert_clip_into_track(lines, track, stem_name, clip_color, rel_path,
         all_clip_lines.extend(_build_clip_xml(
             stem_name, clip_color, rel_path, abs_path,
             sample_count, sample_rate, file_size, bpm, indent,
-            loop_start_sec=region_start, loop_end_sec=region_end
+            loop_start_sec=region_start, loop_end_sec=region_end,
+            base_start_beat=base_start_beat
         ))
 
-    events_open = lines[events_line].replace("<Events />", "<Events>") + ""
-    if "<Events>" not in events_open:
-        events_open = lines[events_line].rstrip() + CRLF
-        events_open = events_open.replace("<Events />", "<Events>")
-
-    new_lines = [events_open] + all_clip_lines + ["\t\t\t\t\t\t</Events>" + CRLF]
-    lines[events_line:events_line + 1] = new_lines
-    return len(new_lines) - 1
+    if empty_line is not None:
+        events_open = lines[empty_line].replace("<Events />", "<Events>")
+        new_lines = [events_open] + all_clip_lines + ["\t\t\t\t\t\t</Events>" + CRLF]
+        lines[empty_line:empty_line + 1] = new_lines
+        return len(new_lines) - 1
+    if close_line is not None:
+        # Events already populated (a previous version's clips) — append before </Events>.
+        lines[close_line:close_line] = all_clip_lines
+        return len(all_clip_lines)
+    return 0
 
 
 def remove_tracks_by_indices(lines, track_ranges_to_remove):
@@ -1069,13 +1085,31 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir):
         regions = stem.get("regions", None)
 
         clip_name = stem.get("clip_name", stem["name"])
+        base_beat = stem.get("base_start_beat", CLIP_START_BEATS)
         inserted = insert_clip_into_track(
             lines, track, clip_name, stem["color"],
             rel_path, abs_path,
             sample_count, sample_rate, file_size, bpm,
-            regions=regions
+            regions=regions, base_start_beat=base_beat
         )
-        offset += inserted
+        track["end"] += inserted
+        total_inserted = inserted
+
+        # extra_clips = later versions of the same element stacked on this track
+        # (radio edit, dub...) placed further down the arrangement.
+        for ec in stem.get("extra_clips", []):
+            ec_sc, ec_sr, ec_fs = get_wav_info(ec["file_path"])
+            ec_abs = str(ec["file_path"]).replace("\\", "/")
+            ec_rel = ec["rel_path"].replace("\\", "/")
+            n = insert_clip_into_track(
+                lines, track, ec.get("clip_name", clip_name), stem["color"],
+                ec_rel, ec_abs, ec_sc, ec_sr, ec_fs, bpm,
+                regions=ec.get("regions"), base_start_beat=ec["start_beat"]
+            )
+            track["end"] += n
+            total_inserted += n
+
+        offset += total_inserted
 
     all_tracks_pre = find_track_ranges(lines)
     audio_pre = [t for t in all_tracks_pre if t["type"] == "AudioTrack"]

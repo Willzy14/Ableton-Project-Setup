@@ -127,7 +127,7 @@ Real packs aren't always one flat folder of stems. The builder must resolve the 
 
 **Detection rule (versions vs category):** a subfolder whose element keys (filename after the last `_`, normalised) **mirror** the top-level stems (≥50% overlap) is an alternate VERSION; otherwise it's a CATEGORY subfolder and gets flattened in. `Source/versions.py::detect_versions()` does this — validated: Fallon → Extended + Edit STems with 39/39 elements paired; flat packs → None.
 
-**Build status:** version DETECTION done + validated (`versions.py`). Still to build: the LAYOUT engine (place each version's clips at its timeline offset on shared element-tracks; flat-mix bounce per version), same-folder name-token detection (Get Right), and wet/dry handling.
+**Build status:** version detection + LAYOUT ENGINE done + validated on Fallon. `build_multiversion_project()` in project_builder processes each version independently (classify → full-mix → bus-detect → flat bounce), pairs elements across versions onto shared tracks (clip inserter now takes a `base_start_beat` offset and stacks multiple clips per track), lays versions out at `VERSION_GAP_BARS` (16) gaps, flat-ref bounce under each version. Fallon → Extended@bar33 + Edit STems@bar241, 36 element tracks each carrying extended + radio clips, FLAT REF with a bounce clip per version. Single-version packs route around all of this (detect_versions → None). Still to build: same-folder name-token version detection (Get Right S16/S17), and wet/dry (wet on, dry grouped+muted under).
 
 ### Project Folder Structure
 ```
