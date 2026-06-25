@@ -455,19 +455,32 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base)
                     "clip_name": pv[k]["bounce_path"].stem})
         all_stems.append(flat)
 
-    # supplied refs + group buses: per version, at their offsets
-    for k, p in enumerate(pv):
-        for r in p["refs"]:
-            all_stems.append({"name": r["orig_name"], "clip_name": r["orig_name"],
-                              "category": "reference", "color": REF_TRACK_COLOR,
-                              "file_path": r["file_path"], "rel_path": r["rel_path"],
-                              "regions": None, "base_start_beat": offsets[k], "extra_clips": []})
-    for k, p in enumerate(pv):
-        for b in p["buses"]:
-            all_stems.append({"name": b["orig_name"], "clip_name": b["orig_name"],
-                              "category": "bus", "color": BUS_TRACK_COLOR,
-                              "file_path": b["file_path"], "rel_path": b["rel_path"],
-                              "regions": None, "base_start_beat": offsets[k], "extra_clips": []})
+    # Supplied refs and group buses are SHARED across versions by element too
+    # (extended + radio of the same ref/bus stack on one track), so the bottom
+    # of the project lines up as neatly as the working tracks.
+    def _shared(items_by_version, category, color):
+        by_elem = {}
+        out = []
+        for k, p in enumerate(pv):
+            for it in items_by_version(p):
+                ek = it["element_key"]
+                t = by_elem.get(ek)
+                if t is not None:
+                    t["extra_clips"].append({
+                        "file_path": it["file_path"], "rel_path": it["rel_path"],
+                        "regions": None, "start_beat": offsets[k],
+                        "clip_name": it["orig_name"]})
+                else:
+                    t = {"name": it["orig_name"], "clip_name": it["orig_name"],
+                         "category": category, "color": color,
+                         "file_path": it["file_path"], "rel_path": it["rel_path"],
+                         "regions": None, "base_start_beat": offsets[k], "extra_clips": []}
+                    by_elem[ek] = t
+                    out.append(t)
+        return out
+
+    all_stems += _shared(lambda p: p["refs"], "reference", REF_TRACK_COLOR)
+    all_stems += _shared(lambda p: p["buses"], "bus", BUS_TRACK_COLOR)
 
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template (" + str(len(all_stems)) + " tracks)...")
