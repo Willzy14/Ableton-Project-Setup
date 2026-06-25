@@ -135,7 +135,14 @@ def audio_label(wav_path):
     f = analyze_stem(wav_path)
     if not f:
         return None
+    # Mastered/limited full mix: low crest, broadband, sustained.
     if f["crest"] <= 5.0 and f["active_bands"] >= 6 and f["active_frac"] >= 0.6:
+        return "full_mix"
+    # Un-mastered full bounce ("Current"/2-mix): more dynamic (higher crest) but
+    # fills the WHOLE spectrum (all 9 bands) and is sustained — a single stem
+    # almost never lights every band; transient broadband (FX/drums) has crest
+    # well above this ceiling.
+    if f["active_bands"] >= 9 and f["active_frac"] >= 0.7 and f["crest"] <= 15.0:
         return "full_mix"
     return None
 

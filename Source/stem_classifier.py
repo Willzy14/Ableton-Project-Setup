@@ -164,6 +164,7 @@ REFERENCE_PATTERNS = [
     r"\btest.?mix",
     r"\brough.?mix",
     r"\bscratch.?mix",
+    r"\bcurrent\b",
     r"\bmaster\b",
     r"\bflat.?mix",
     r"\bpre.?master",
