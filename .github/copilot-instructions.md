@@ -21,3 +21,13 @@ Ableton Project Setup/
   Documentation/       # AI_CONTEXT.md, specs
   .github/             # memory.json, activity log, this file
 ```
+
+## Current Status (2026-06-25) — what NOT to rebuild
+- ✅ **BPM auto-detection** — `Source/bpm_detector.py` (pure-stdlib kick onset + lattice fit). `project_builder` bpm arg is optional.
+- ✅ **Clip naming** — track name = display ("DR Kick"), clip name = original filename ("Kick").
+- ✅ **Classifier patterns** — BVs→vocals, Ref Bounce→reference, Tops/Fills/CABASA/DRM_*→drums.
+- ✅ **Flat reference** — single bounced track (`Source/bounce.py`), colour 37, muted, Ext. Out, last. Supplied refs kept as separate match tracks. NO ref GroupTrack.
+- ✅ **Working-track grouping** — drums/music/vocals/fx with 2+ stems → GroupTrack (audible, Main, expanded, category colour). Kick/bass/sends standalone.
+- ✅ **bounce.py** uses numpy when present (~15×) with bit-identical stdlib fallback.
+- ⚠️ Machine runs **Python 3.14.0** — saw a one-off transient JIT TypeError; re-run if a build crashes oddly.
+- **Next**: optional INST→music, optional Bass group, optional 24-bit RMS speedup.
