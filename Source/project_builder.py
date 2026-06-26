@@ -6,10 +6,14 @@ Usage:
 Example:
     python project_builder.py "./stems" "Ak1ra" "The Way" "Ramzi Karam" 122
 """
+import json
 import math
+import os
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -22,7 +26,8 @@ from versions import detect_versions, element_key
 
 VERSION_GAP_BARS = 16   # gap between version sections on the timeline
 
-TEMPLATE_PATH = Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates\Ableton Project Set Up 250 Tracks.als")
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "Config" / "project_builder.json"
+DEFAULT_TEMPLATE_PATH = Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates\Ableton Project Set Up 250 Tracks.als")
 
 # Colour for the reference tracks at the bottom (flat bounce + any supplied
 # ref/master). 14 = red — Sam wants the reference tracks red.
@@ -33,29 +38,259 @@ REF_TRACK_COLOR = 14
 # If it's not the peach you want, change this number — the palette is a 14x5
 # grid, indices 0-69 left-to-right, top-to-bottom.
 BUS_TRACK_COLOR = 2
-OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\0.1---GIT HUB---\Ableton Project Setup")
+DEFAULT_OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\0.1---GIT HUB---\Ableton Project Setup")
+
+# Backwards-compatible names for older scripts importing these constants.
+TEMPLATE_PATH = DEFAULT_TEMPLATE_PATH
+OUTPUT_BASE = DEFAULT_OUTPUT_BASE
+
+# Audio-content classifier for stems the filename classifier can't name
+# (Demucs + Whisper). Run as a subprocess so the CUDA context / any failure
+# stays isolated from the build.
+ML_SCRIPT = Path(__file__).parent / "audio_ml_classify.py"
+
+
+def _load_project_config():
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _configured_path(env_name, config_key, default):
+    env_value = os.environ.get(env_name)
+    if env_value:
+        return Path(env_value)
+    config_value = _load_project_config().get(config_key)
+    if config_value:
+        return Path(config_value)
+    return Path(default)
+
+
+def get_template_path():
+    return _configured_path("ABLETON_TEMPLATE_PATH", "template_path", DEFAULT_TEMPLATE_PATH)
+
+
+def get_output_base():
+    return _configured_path("ABLETON_OUTPUT_BASE", "output_base", DEFAULT_OUTPUT_BASE)
+
+
+def get_ml_python_exe():
+    env_value = os.environ.get("PYTHON_ML_EXE")
+    if env_value:
+        return env_value
+    return _load_project_config().get("python_ml_exe") or None
+
+
+def get_enable_ml_classifier():
+    env_value = os.environ.get("ENABLE_ML_CLASSIFIER")
+    if env_value is not None:
+        return env_value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(_load_project_config().get("enable_ml_classifier", True))
 
 
 def detect_project_bpm(classified):
-    """Auto-detect BPM from the most reliable percussive stem available.
+    """Auto-detect BPM from the cleanest grid-locking rhythmic stem.
 
-    Tries kick first (cleanest 4/4 pulse), then a full drums stem, then bass.
+    Scores every kick/drum/bass candidate instead of trusting the first result.
+    Prefer BPMs that multiple credible stems agree on, then choose the cleanest
+    grid lock inside that consensus group. This catches packs like Moby where
+    the kick is syncopated but snare/hat stems land exactly on the grid.
     Returns (result_dict, source_path) or (None, None) if nothing detectable.
     """
     candidates = []
     for cat in ("kick", "drums", "bass"):
         candidates.extend(classified.get(cat, []))
+    scored = []
     for f in candidates:
         try:
             result = detect_bpm(f)
-        except Exception:  # noqa: BLE001 — a bad stem shouldn't abort the build
+        except Exception:  # noqa: BLE001 - a bad stem should not abort the build
             result = None
         if result:
-            return result, f
-    return None, None
+            n_onsets = max(result.get("n_onsets", 0), 1)
+            inlier_ratio = result.get("n_inliers", 0) / n_onsets
+            residual = result.get("residual_ms")
+            residual = 999.0 if residual is None else float(residual)
+            quality = (inlier_ratio, -residual, result.get("n_inliers", 0))
+            credible = inlier_ratio >= 0.5 and residual <= 5.0
+            scored.append({
+                "bpm_key": result.get("bpm_rounded"),
+                "credible": credible,
+                "quality": quality,
+                "result": result,
+                "source": f,
+            })
+    if not scored:
+        return None, None
+    consensus_counts = {}
+    for item in scored:
+        if item["credible"]:
+            consensus_counts[item["bpm_key"]] = consensus_counts.get(item["bpm_key"], 0) + 1
+    best = max(
+        scored,
+        key=lambda item: (
+            consensus_counts.get(item["bpm_key"], 0),
+            1 if item["credible"] else 0,
+            item["quality"],
+        ),
+    )
+    return best["result"], best["source"]
 
 
-def build_project(stem_folder, artist, title, label, bpm=None, output_base=None):
+def _version_alignment_sec(bpm_result):
+    """Return the physical onset used to align a version to the timeline."""
+    return bpm_result.get("first_actual_onset_sec", bpm_result.get("first_beat_sec", 0.0))
+
+
+def _detect_version_alignment_sec(mix_stems):
+    """Choose the cleanest kick/drum source for multi-version alignment."""
+    for preferred_categories in (("kick",), ("drums",)):
+        scored = []
+        for stem in mix_stems:
+            if stem.get("category") not in preferred_categories:
+                continue
+            try:
+                result = detect_bpm(stem["file_path"])
+            except Exception:  # noqa: BLE001
+                result = None
+            if not result:
+                continue
+            n_onsets = max(result.get("n_onsets", 0), 1)
+            inlier_ratio = result.get("n_inliers", 0) / n_onsets
+            residual = result.get("residual_ms")
+            residual = 999.0 if residual is None else float(residual)
+            scored.append((inlier_ratio, -residual, result.get("n_inliers", 0), result))
+        if scored:
+            return _version_alignment_sec(max(scored, key=lambda item: item[:3])[3])
+    return 0.0
+
+
+def _detect_version_stack_anchor_sec(mix_stems, project_bpm):
+    """Find the source-time downbeat used as the start of a later version stack.
+
+    Prefer the earliest kick-layer onset that agrees with the project BPM. This
+    keeps stacks together while avoiding the dry-kick-only problem: in Fallon the
+    dry kick enters much later, but the processed kick layer marks the radio
+    edit's musical start.
+    """
+    def _is_named_kick(stem):
+        return "kick" in stem["file_path"].stem.lower()
+
+    buckets = (
+        lambda stem: _is_named_kick(stem),
+        lambda stem: stem.get("category") == "kick",
+        lambda stem: stem.get("category") == "drums",
+    )
+    for matches_bucket in buckets:
+        candidates = []
+        for stem in mix_stems:
+            if not matches_bucket(stem):
+                continue
+            try:
+                result = detect_bpm(stem["file_path"])
+            except Exception:  # noqa: BLE001
+                result = None
+            if not result:
+                continue
+            rounded = result.get("bpm_rounded")
+            if rounded is not None and abs(float(rounded) - float(project_bpm)) > 1.0:
+                continue
+            n_onsets = max(result.get("n_onsets", 0), 1)
+            inlier_ratio = result.get("n_inliers", 0) / n_onsets
+            residual = result.get("residual_ms")
+            residual = 999.0 if residual is None else float(residual)
+            if inlier_ratio < 0.5 or residual > 15.0:
+                continue
+            candidates.append(_version_alignment_sec(result))
+        if candidates:
+            return min(candidates)
+    return 0.0
+
+
+def _next_phrase_boundary(beat, phrase_bars=32):
+    phrase_beats = phrase_bars * 4
+    return math.ceil(beat / phrase_beats) * phrase_beats
+
+
+def _ml_classify_unknowns(paths, use_whisper=True, python_exe=None):
+    """Classify filename-unknown stems by audio content (Demucs + Whisper).
+
+    Runs Source/audio_ml_classify.py as a subprocess (separate CUDA context,
+    PYTHON_JIT=0). Returns {Path: result_dict}; an empty dict if ML is
+    unavailable or errors, so the caller can fall back to placing them in music.
+    """
+    if not paths:
+        return {}
+    python_exe = python_exe or get_ml_python_exe() or sys.executable
+    work = Path(tempfile.mkdtemp(prefix="als_ml_"))
+    in_json = work / "in.json"
+    out_json = work / "out.json"
+    with open(in_json, "w", encoding="utf-8") as fh:
+        json.dump([str(p) for p in paths], fh)
+    cmd = [python_exe, str(ML_SCRIPT), "--in", str(in_json), "--out", str(out_json)]
+    if not use_whisper:
+        cmd.append("--no-whisper")
+    env = dict(os.environ)
+    env["PYTHON_JIT"] = "0"
+    try:
+        subprocess.run(cmd, env=env, check=True)
+        with open(out_json, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception as e:  # noqa: BLE001 — ML is best-effort; never abort the build
+        print("  ML classification unavailable (" + repr(e) + "); unknowns -> music")
+        return {}
+    return {p: raw[str(p)] for p in paths if str(p) in raw}
+
+
+def _write_ml_report(report_path, ordered_paths, ml_results):
+    """Write a human-readable report of every audio-classified (unnamed) stem."""
+    lines = [
+        "ML Classification Report",
+        "=" * 60,
+        "Stems with no recognisable filename, classified by audio content",
+        "(Demucs source separation; Whisper confirms vocals via lyrics).",
+        "",
+        "drums/bass/other/vocals = energy fraction in each Demucs bin.",
+        "'other' maps to MUSIC. FX has no Demucs bin so it lands in MUSIC.",
+        "full_mix? = energy spread across all four bins (possible mix/ref) - review.",
+        "",
+        str(len(ordered_paths)) + " stems classified:",
+        "",
+    ]
+    by_cat = {}
+    for p in ordered_paths:
+        rec = ml_results.get(p)
+        cat = (rec.get("category") if rec else None) or "music"
+        by_cat.setdefault(cat, []).append((p, rec))
+    for cat in ("drums", "bass", "music", "vocals"):
+        items = by_cat.get(cat)
+        if not items:
+            continue
+        lines.append("[" + cat.upper() + "]")
+        for p, rec in items:
+            if not rec:
+                lines.append("  %-38s (fallback - ML unavailable)" % p.name[:38])
+                continue
+            fr = rec.get("fractions", {})
+            flag = "  full_mix?" if rec.get("full_mix_like") else ""
+            lines.append("  %-38s conf %.2f  d/b/o/v %.2f/%.2f/%.2f/%.2f%s" % (
+                p.name[:38], rec.get("confidence", 0.0),
+                fr.get("drums", 0), fr.get("bass", 0), fr.get("other", 0),
+                fr.get("vocals", 0), flag))
+            if rec.get("whisper_text"):
+                lines.append("      whisper (%d words): \"%s\"" % (
+                    rec.get("whisper_words", 0), rec["whisper_text"][:90]))
+        lines.append("")
+    with open(report_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+
+
+def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
+                  use_ml=None, project_name=None):
     """Build a complete Ableton project from a folder of stems.
 
     Args:
@@ -72,14 +307,19 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
     """
     stem_folder = Path(stem_folder)
     if output_base is None:
-        output_base = OUTPUT_BASE
+        output_base = get_output_base()
     output_base = Path(output_base)
+    if use_ml is None:
+        use_ml = get_enable_ml_classifier()
 
     versions = detect_versions(stem_folder)
     if versions:
-        return build_multiversion_project(versions, artist, title, label, bpm, output_base)
+        return build_multiversion_project(
+            versions, artist, title, label, bpm, output_base, use_ml=use_ml
+        )
 
-    project_name = artist + " - " + title + " [" + label + "]"
+    if project_name is None:
+        project_name = artist + " - " + title + " [" + label + "]"
     project_folder = output_base / (project_name + " Project")
     audio_folder = project_folder / "Audio"
     info_folder = project_folder / "Ableton Project Info"
@@ -118,12 +358,24 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
         unclassified = [f for f in unclassified if f not in full_mixes]
 
     if unclassified:
-        print("\nWARNING — unclassified stems (will be placed as music):")
+        if use_ml:
+            print("\n" + str(len(unclassified)) + " stems have no recognisable "
+                  "name — classifying by audio content (Demucs + Whisper)...")
+        else:
+            print("\nWARNING — " + str(len(unclassified))
+                  + " unclassified stems (ML off; placed as music):")
+        ml_results = _ml_classify_unknowns(unclassified) if use_ml else {}
         for f in unclassified:
-            print("  " + f.name)
-        if "music" not in classified:
-            classified["music"] = []
-        classified["music"].extend(unclassified)
+            rec = ml_results.get(f)
+            cat = (rec.get("category") if rec else None) or "music"
+            classified.setdefault(cat, []).append(f)
+        _write_ml_report(project_folder / "ML Classification Report.txt",
+                         unclassified, ml_results)
+        if use_ml:
+            n_ml = sum(1 for f in unclassified
+                       if ml_results.get(f) and ml_results[f].get("category"))
+            print("  audio-classified " + str(n_ml) + "/" + str(len(unclassified))
+                  + " stems -> see 'ML Classification Report.txt'")
         unclassified = []
 
     if bpm is None or str(bpm).lower() == "auto":
@@ -260,7 +512,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template...")
     patch_project(
-        template_path=TEMPLATE_PATH,
+        template_path=get_template_path(),
         output_path=als_path,
         stems=all_stems,
         bpm=float(bpm),
@@ -276,7 +528,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None)
     return project_folder
 
 
-def _process_version_files(files, version_audio_dir, rel_prefix):
+def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
+                           ml_report_path=None):
     """Classify + region-detect + bus/full-mix-detect ONE version's files.
 
     Copies files into version_audio_dir. Returns (mix_stems, ref_stems,
@@ -285,6 +538,7 @@ def _process_version_files(files, version_audio_dir, rel_prefix):
     """
     classified = {}
     references = []
+    unclassified = []
     for f in files:
         cat, is_ref = classify_stem(f.name)
         if is_ref:
@@ -292,11 +546,11 @@ def _process_version_files(files, version_audio_dir, rel_prefix):
         elif cat:
             classified.setdefault(cat, []).append(f)
         else:
-            classified.setdefault("music", []).append(f)
+            unclassified.append(f)
 
     music = classified.get("music", [])
     fulls = []
-    for f in music:
+    for f in list(unclassified) + list(music):
         try:
             if audio_label(f) == "full_mix":
                 fulls.append(f)
@@ -307,6 +561,16 @@ def _process_version_files(files, version_audio_dir, rel_prefix):
         classified["music"] = [f for f in music if f not in fulls]
         if not classified["music"]:
             classified.pop("music", None)
+        unclassified = [f for f in unclassified if f not in fulls]
+
+    if unclassified:
+        ml_results = _ml_classify_unknowns(unclassified) if use_ml else {}
+        for f in unclassified:
+            rec = ml_results.get(f)
+            cat = (rec.get("category") if rec else None) or "music"
+            classified.setdefault(cat, []).append(f)
+        if ml_report_path is not None:
+            _write_ml_report(ml_report_path, unclassified, ml_results)
 
     version_audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -340,7 +604,8 @@ def _process_version_files(files, version_audio_dir, rel_prefix):
     return mix_stems, ref_stems, bus_stems
 
 
-def build_multiversion_project(versions, artist, title, label, bpm, output_base):
+def build_multiversion_project(versions, artist, title, label, bpm, output_base,
+                               use_ml=True):
     """Build a project from multiple versions (extended / radio edit / dub ...).
 
     Each element shares ONE track across versions; versions are laid out as
@@ -363,7 +628,11 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base)
         vname = _safe(v["name"])
         rel_prefix = "Audio/" + vname + "/"
         print("\n[" + v["name"] + "] processing " + str(len(v["files"])) + " files...")
-        mix, refs, buses = _process_version_files(v["files"], audio_folder / vname, rel_prefix)
+        report_path = project_folder / ("ML Classification Report - " + vname + ".txt")
+        mix, refs, buses = _process_version_files(
+            v["files"], audio_folder / vname, rel_prefix,
+            use_ml=use_ml, ml_report_path=report_path,
+        )
         print("  mix=" + str(len(mix)) + " refs=" + str(len(refs)) + " buses=" + str(len(buses)))
         pv.append({"name": v["name"], "vname": vname, "rel_prefix": rel_prefix,
                    "vdir": audio_folder / vname, "mix": mix, "refs": refs, "buses": buses})
@@ -394,15 +663,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base)
             for (_rs, _re) in (s["regions"] or []):
                 max_end = max(max_end, _re)
         p["length_beats"] = (max_end / 60.0) * bpm
-        # kick grid phase (pre-roll) so we can land this version's kick on a bar
-        kick_files = ([s["file_path"] for s in p["mix"] if s["category"] == "kick"]
-                      or [s["file_path"] for s in p["mix"] if s["category"] == "drums"])
-        p["first_beat_sec"] = 0.0
-        for kf in kick_files:
-            r = detect_bpm(kf)
-            if r:
-                p["first_beat_sec"] = r["first_beat_sec"]
-                break
+        p["first_beat_sec"] = _detect_version_stack_anchor_sec(p["mix"] + p["buses"], bpm)
 
     def _version_label(k):
         p = pv[k]
@@ -415,17 +676,24 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base)
             return "Instrumental"
         return "Extended" if k == 0 else p["name"]
 
-    # Each version's KICK lands on a bar line; the whole version shifts with it
-    # (stays in sync), so a pre-downbeat swoosh becomes a pickup before the bar.
+    # Later versions are placed on phrase slots first, then the whole stack is
+    # nudged by the earliest credible kick-named layer so the kick sits on-grid.
+    # The locator follows the physical stack start, not the kick anchor.
     offsets = []
     locators = []
     bar_cursor = float(CLIP_START_BEATS)
     for k, p in enumerate(pv):
         fb_beats = (p["first_beat_sec"] / 60.0) * bpm
-        offsets.append(bar_cursor - fb_beats)
-        locators.append((bar_cursor, _version_label(k)))
-        content_end = offsets[k] + p["length_beats"]
-        bar_cursor = math.ceil((content_end + VERSION_GAP_BARS * 4) / 4.0) * 4
+        base_start = bar_cursor - fb_beats
+        offsets.append(base_start)
+        locators.append((base_start, _version_label(k)))
+        content_end = base_start + p["length_beats"]
+        next_start = content_end + VERSION_GAP_BARS * 4
+        bar_cursor = (
+            math.ceil(next_start / 4.0) * 4
+            if k == 0 and len(pv) == 1
+            else _next_phrase_boundary(next_start)
+        )
 
     primary = pv[0]
     for s in primary["mix"]:
@@ -513,11 +781,11 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base)
 
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template (" + str(len(all_stems)) + " tracks)...")
-    patch_project(template_path=TEMPLATE_PATH, output_path=als_path,
+    patch_project(template_path=get_template_path(), output_path=als_path,
                   stems=all_stems, bpm=bpm, project_audio_dir=audio_folder,
                   locators=locators)
 
-    bars = [str(int((offsets[i] - CLIP_START_BEATS) / 4) + 33) for i in range(len(pv))]
+    bars = [str(int((locators[i][0] - CLIP_START_BEATS) / 4) + 33) for i in range(len(pv))]
     print("\nMulti-version project created: " + str(project_folder))
     print("  BPM " + str(int(bpm)) + " | versions at bars: "
           + ", ".join(pv[i]["name"] + "=" + bars[i] for i in range(len(pv))))

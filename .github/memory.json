@@ -7,7 +7,48 @@
     "stack": ["Python", "gzip", "Ableton Live 12.3 ALS format"],
     "repo_url": ""
   },
-  "modules": {},
+  "modules": {
+    "Source/project_builder.py": {
+      "purpose": "Main orchestrator: scans stem folders, classifies stems, detects BPM, copies audio, builds flat references, detects group buses, and patches the final ALS.",
+      "notes": "Contains single-version and multi-version build paths. As of 2026-06-26 it can call audio_ml_classify.py for filename-unknown stems. Multi-version later stacks are placed on phrase slots, then nudged together by the earliest credible kick-named layer."
+    },
+    "Source/stem_classifier.py": {
+      "purpose": "Filename-based classification and display track-name generation.",
+      "notes": "Patterns cover drums, bass, music, vocals, FX, sends, references, and common messy export names."
+    },
+    "Source/audio_ml_classify.py": {
+      "purpose": "Heavy audio-content classifier for unnamed stems using Demucs source bins and optional Whisper vocal confirmation.",
+      "notes": "Used for the Moby unnamed-stem test. Runs as a subprocess from project_builder.py so ML failures do not abort the build."
+    },
+    "Source/stem_analysis.py": {
+      "purpose": "Numpy audio analysis for full-mix/reference detection and group-bus/submix detection.",
+      "notes": "Keeps full mixes and detected buses out of the flat-reference sum."
+    },
+    "Source/als_patcher.py": {
+      "purpose": "Raw-text ALS patching engine for tracks, clips, groups, locators, routing, colours, and regions.",
+      "notes": "Do not replace with XML libraries; Ableton is sensitive to formatting."
+    },
+    "Source/bpm_detector.py": {
+      "purpose": "Pure-stdlib BPM detection from kick/drum onsets.",
+      "notes": "Returns both folded grid phase and first_actual_onset_sec so multi-version alignment can use the physical timing anchor."
+    },
+    "Source/bounce.py": {
+      "purpose": "Flat-reference WAV summing with numpy fast path and stdlib fallback.",
+      "notes": "Used to print one red FLAT REF track rather than duplicating stems into a reference group."
+    },
+    "Source/versions.py": {
+      "purpose": "Detects alternate-version subfolders by mirrored element keys.",
+      "notes": "Same-folder name-token versions are not implemented yet."
+    },
+    "Source/validate_project.py": {
+      "purpose": "Canonical generated-project validator for ALS gzip/XML readability, tempo, tempo automation, Session Time, refs, FLAT REF, and file refs.",
+      "notes": "Use this instead of verify_output.py for arbitrary outputs."
+    },
+    "Config/project_builder.json": {
+      "purpose": "Local defaults for template path, output base, ML interpreter, and ML enablement.",
+      "notes": "Environment variables override config values."
+    }
+  },
   "sessions": [
     {
       "date": "2026-05-19",
@@ -42,6 +83,52 @@
         "Optional: speed up find_audio_regions 24-bit RMS (slow part of large 24-bit builds)",
         "Watch Python 3.14.0 interpreter glitches; stable 3.13 if builds become flaky"
       ]
+    },
+    {
+      "date": "2026-06-26",
+      "summary": "Moby unnamed-stem test: Claude added Source/audio_ml_classify.py and integrated optional Demucs+Whisper classification for filename-unknown stems. Codex validated the Desktop output at C:\\Users\\Carillon\\Desktop\\Mobi Project\\Mobi.als: 62 ALS tracks, grouped Drums/Bass/Music/Vox, 55 source WAVs copied plus Mobi FLAT REF.wav, rough reference retained, and ML Classification Report.txt documenting 47 audio-classified stems. Also repaired bootstrap docs by adding Documentation/TOOLBOX.md and !SKILLS.md.",
+      "files_changed": [
+        "Source/audio_ml_classify.py",
+        "Source/project_builder.py",
+        "Source/stem_classifier.py",
+        "Documentation/AI_CONTEXT.md",
+        "Documentation/TOOLBOX.md",
+        "!SKILLS.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Sam should open the Mobi project in Ableton and judge classification by ear",
+        "Commit or refine the ML classifier work after review",
+        "Install Python 3.13",
+        "Fix multi-version off-grid alignment using first actual kick onset"
+      ]
+    },
+    {
+      "date": "2026-06-26",
+      "summary": "Codex completed the reliability pass: added Source/validate_project.py, config/env defaults, Python 3.13 ML verification, multi-version ML classification, and corrected Fallon radio-edit alignment. Fallon CODEX VERIFY 6 copies stems from Finished Stem Mixes only and matches Sam's manual SW Fix clip starts within about 0.0012 beats.",
+      "files_changed": [
+        "Source/project_builder.py",
+        "Source/bpm_detector.py",
+        "Source/stem_classifier.py",
+        "Source/audio_ml_classify.py",
+        "Source/validate_project.py",
+        "Config/project_builder.json",
+        "Tests/",
+        "Documentation/AI_CONTEXT.md",
+        "Documentation/TOOLBOX.md",
+        "Documentation/CODEBASE_REVIEW_NEXT_STEPS.md",
+        ".github/memory.json",
+        ".github/copilot-instructions.md",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Sam should inspect Fallon CODEX VERIFY 6 in Ableton",
+        "Sam should inspect the fresh Moby project if it still exists on Desktop",
+        "Add ML subprocess timeout/temp cleanup",
+        "Implement same-folder name-token versions",
+        "Implement wet/dry handling"
+      ]
     }
   ],
   "decisions": [
@@ -74,6 +161,16 @@
       "date": "2026-06-25",
       "decision": "bounce.py uses numpy when installed (optional import) with a pure-stdlib fallback; both paths verified bit-identical. Working groups coloured with the category colour; group names Drums/Bass/Music/Vox/FX (bass IS grouped per Sam 2026-06-25). Reference tracks coloured red (14). Silence trim retuned tighter (headroom 55dB / window 0.1s / min-gap 2.5s / tail 1s) so clips hug audio without chopping decays.",
       "why": "Optional numpy keeps the tool install-free yet ~15x faster where numpy exists. Category-coloured group headers read at a glance. Sam asked for red refs, bass grouping, and tighter silence trimming after seeing the first demo."
+    },
+    {
+      "date": "2026-06-26",
+      "decision": "Filename-unknown stems can be classified with an optional heavy ML second stage: Demucs energy bins map to drums/bass/music/vocals and Whisper confirms likely vocals.",
+      "why": "The Moby test pack intentionally used generic names such as Audio 10_02.wav. Filename rules alone would collapse most tracks into Music; source-bin classification gives a better first-pass project while preserving a human-readable report for review."
+    },
+    {
+      "date": "2026-06-26",
+      "decision": "Multi-version later sections are placed as a whole stack on the next phrase slot, then the entire stack is nudged together using the earliest credible kick-named layer as the grid anchor.",
+      "why": "Radio edits can have no dry kick at the start. Fallon proved that anchoring to the dry kick or to the locator is wrong; the musical stack must stay locked together and only receive the small left/right nudge Sam would do by eye in Ableton."
     }
   ]
 }

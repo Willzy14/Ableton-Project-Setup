@@ -273,6 +273,7 @@ def detect_bpm(wav_path, min_bpm=MIN_BPM, max_bpm=MAX_BPM):
         "bpm_rounded": int(round(bpm)),
         "period": period,
         "first_beat_sec": round(first_beat_sec, 4),
+        "first_actual_onset_sec": round(onsets[0], 4),
         "n_onsets": len(onsets),
         "n_inliers": len(inliers),
         "residual_ms": round(_median(inliers), 2) if inliers else None,

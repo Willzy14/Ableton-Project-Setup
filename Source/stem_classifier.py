@@ -109,6 +109,7 @@ MUSIC_PATTERNS = [
 VOCAL_PATTERNS = [
     r"\bvocal",
     r"\bvox",
+    r"\bad.?lib",
     r"\bacapella",
     r"\bvoice",
     r"\bsinging",
@@ -166,6 +167,8 @@ REFERENCE_PATTERNS = [
     r"\bscratch.?mix",
     r"\bcurrent\b",
     r"\bmaster\b",
+    r"\bunmixed",
+    r"\brough.?(mix|level|bounce|master|cut|ref)",
     r"\bflat.?mix",
     r"\bpre.?master",
     r"\bfull.?mix",
@@ -325,7 +328,12 @@ def _normalize_stem_name(stem_name):
 
 
 def _extract_descriptor(words):
-    """Find the first category-relevant word and return everything from there."""
+    """Find the first category-relevant word and return everything from there.
+
+    Falls back to the LAST token (instrument is usually at the end of
+    "<artist> <title> <instrument>" names); a meaningless trailing number is
+    handled by the bounce-suffix strip + numeric-drop in generate_track_name.
+    """
     for i, w in enumerate(words):
         wl = w.lower()
         clean = re.sub(r"\d+$", "", wl)
@@ -389,6 +397,9 @@ def _clean_descriptor(raw_words):
 
 def generate_track_name(stem_name, category):
     """Generate a display name for an Ableton track from a stem filename."""
+    # Drop a trailing bounce/version suffix ("_02", "_03"...) — it's an export
+    # counter, not part of the instrument name.
+    stem_name = re.sub(r"_\d+$", "", stem_name)
     words = _normalize_stem_name(stem_name)
     desc_words = _extract_descriptor(words)
     parts = _clean_descriptor(desc_words)
@@ -410,6 +421,13 @@ def generate_track_name(stem_name, category):
         if parts and parts[0] in skip:
             parts = parts[1:]
         descriptor = " ".join(parts)
+
+    # A descriptor that is only a bounce-version number (e.g. "Audio 1_02"
+    # -> "02") is meaningless; drop it so generically-named stems become clean
+    # sequential names (Vox, Vox 2, ... via duplicate numbering) instead of
+    # colliding on "Vox 02".
+    if descriptor and all(re.fullmatch(r"\d+", w) for w in descriptor.split()):
+        descriptor = ""
 
     if prefix and descriptor:
         return prefix + " " + descriptor
