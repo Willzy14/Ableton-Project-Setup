@@ -34,13 +34,16 @@ async function init() {
     State.colorCategories = boot.colorCategories;
     State.profiles = boot.profiles;
     State.settings = boot.settings;
+    State.version = boot.version;
   } else {
     // preview-only defaults
     State.palette = Array.from({ length: 70 }, (_, i) => `hsl(${i * 5},70%,55%)`);
     State.colorCategories = ["drums", "bass", "music", "vocals", "fx", "sends"];
     State.profiles = [{ name: "Default", colors: {} }];
     State.settings = { output_folder: "(set in app)", active_profile: "Default" };
+    State.version = "preview";
   }
+  const vb = $("versionBadge"); if (vb) vb.textContent = "v" + (State.version || "—");
   hydrateTopbar();
   if (State.projects.length === 0) addProject();
   wireGlobalButtons();
@@ -65,6 +68,7 @@ function hydrateTopbar() {
 function wireGlobalButtons() {
   $("addProjectBtn").onclick = addProject;
   $("coloursBtn").onclick = openColours;
+  $("updateBtn").onclick = checkForUpdate;
   $("closeColours").onclick = () => $("coloursModal").classList.add("hidden");
   $("changeFolderBtn").onclick = changeFolder;
   $("goBtn").onclick = runBatch;
@@ -72,6 +76,22 @@ function wireGlobalButtons() {
   $("newProfileBtn").onclick = newProfile;
   $("deleteProfileBtn").onclick = deleteProfile;
   $("closeProgress").onclick = () => $("progressOverlay").classList.add("hidden");
+}
+
+async function checkForUpdate() {
+  const a = api();
+  if (!a) { alert("Updates run in the app window."); return; }
+  const btn = $("updateBtn");
+  const old = btn.textContent;
+  btn.textContent = "⟳ Updating…"; btn.disabled = true;
+  try {
+    const r = await a.update_app();
+    if (!r.ok) alert("Update: " + (r.error || "failed"));
+    else if (r.changed) alert("Updated to v" + r.version + ".\nClose and relaunch to apply.");
+    else alert("You're already on the latest version (v" + (r.version || State.version) + ").");
+  } finally {
+    btn.textContent = old; btn.disabled = false;
+  }
 }
 
 async function changeFolder() {

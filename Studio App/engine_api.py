@@ -72,6 +72,13 @@ def _write_json(path, data):
         json.dump(data, fh, indent=2)
 
 
+def get_version():
+    try:
+        return (APP_DIR / "VERSION").read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001
+        return "0.0.0"
+
+
 def default_profile(name="Default"):
     return {"name": name,
             "colors": {c: DEFAULT_COLORS[c] for c in COLOR_CATEGORIES}}
@@ -216,7 +223,27 @@ class Api:
             "settings": load_settings(),
             "palette": ABLETON_PALETTE,
             "colorCategories": COLOR_CATEGORIES,
+            "version": get_version(),
         }
+
+    def update_app(self):
+        """Pull the latest code (backstop — Dropbox usually syncs it already).
+
+        Runs `git pull` in the repo so a studio machine can grab the newest
+        version on demand; restart the app to load it. No-op if not a git repo.
+        """
+        if not (REPO_DIR / ".git").exists():
+            return {"ok": False, "error": "Not a git checkout — updates arrive via Dropbox sync."}
+        try:
+            import subprocess
+            out = subprocess.run(["git", "pull", "--ff-only"], cwd=str(REPO_DIR),
+                                 capture_output=True, text=True, timeout=60)
+            msg = (out.stdout + out.stderr).strip()
+            changed = "Already up to date" not in msg
+            return {"ok": out.returncode == 0, "changed": changed,
+                    "message": msg, "version": get_version()}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
 
     def save_profile(self, profile):
         profiles = load_profiles()
