@@ -25,7 +25,11 @@ Ableton Project Setup/
   .github/             # memory.json, activity log, this file
 ```
 
-## Current Status (2026-06-26 EOD)
+## Current Status (2026-06-29 EOD)
+- Done: FIRST REAL PRODUCTION RUN — built `Replicage - Amen [Sound Better]` into `2. Ongoing Stem Mixes` (single-version; radio/extended/dub baked end-to-end into one long timeline per stem).
+- Done: wet/dry handling — VOCALS ONLY, explicit WET+DRY pairs only. WET stays on; DRY parked in a muted, collapsed grey "Dry" group, out of the flat-ref sum. `stem_classifier.find_dry_stems` + vocals filter in `build_project`.
+- Done: empty/silent stems (peak < `als_patcher.SILENCE_FLOOR_DB` -60 dBFS) moved to the very bottom with their own colour (`SILENT_TRACK_COLOR` 12), out of layout + sum. `find_audio_regions(return_peak=True)`.
+- Decision: BPM always rounded (whole or half), never warp — closes the precise-BPM question.
 - Done: BPM auto-detect (`Source/bpm_detector.py`) and clip naming (track = simplified display, clip = original filename).
 - Done: classifier plus audio full-mix detection (`Source/stem_analysis.py`): full mixes and refs stay out of the flat sum.
 - Done: flat-ref bounce (`Source/bounce.py`): one red muted Ext. Out reference track, not a reference group.
@@ -43,7 +47,7 @@ Ableton Project Setup/
 - The launcher still defaults to Python 3.14; avoid it unless forced.
 
 ## Next Priority
-1. Add ML subprocess cleanup and timeout handling.
-2. Add same-folder version-token detection, e.g. Get Right `S16` vs `S17 -SHRT EDIT`.
-3. Add wet/dry handling: wet active, dry grouped and muted underneath.
-4. Decide precise-BPM policy for long unwarped multi-version drift.
+1. **Studio UI front-end** (discussed 2026-06-29) — drag-drop WAV/AIFF/ZIP, multi-project queue with a "+" to add projects and a per-project title field, a static "select output folder" set once at start, and a per-user colour setup (Ableton palette indices for drums/bass/music/vox/fx). Drop files + titles for the day's projects, hit Go, come back to a folder of fully set-up projects. Wraps the existing `build_project` engine.
+2. Add ML subprocess cleanup and timeout handling.
+3. Add same-folder version-token detection, e.g. Get Right `S16` vs `S17 -SHRT EDIT`.
+4. Consider applying wet/dry + silent-stem handling to the multi-version build path too (currently single-version only).

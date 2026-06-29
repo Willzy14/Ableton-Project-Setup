@@ -319,6 +319,65 @@ def classify_stems(stem_folder):
     return classified, references, unclassified
 
 
+_DRY_TOKEN = re.compile(r"\bdry\b")
+_WET_TOKEN = re.compile(r"\bwet\b")
+
+
+def _wetdry_words(filename):
+    """Lowercased, punctuation-split words of a stem name (no leading index)."""
+    name = Path(filename).stem
+    name = re.sub(r"^\s*\d{1,3}[_\-\s]+", "", name)        # strip export index "24_"
+    name = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
+    name = re.sub(r"[_\-\.]+", " ", name).lower()
+    return name
+
+
+def is_dry_stem(filename):
+    """True if the stem name carries a standalone 'dry' token."""
+    return bool(_DRY_TOKEN.search(_wetdry_words(filename)))
+
+
+def _element_base_key(filename):
+    """Identity of a stem ignoring export index and wet/dry tokens.
+
+    Two stems that are the wet and dry of the same element share this key.
+    """
+    name = _wetdry_words(filename)
+    name = _WET_TOKEN.sub(" ", name)
+    name = _DRY_TOKEN.sub(" ", name)
+    name = re.sub(r"[^a-z0-9 ]+", " ", name)              # drop parens etc.
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def is_wet_stem(filename):
+    """True if the stem name carries a standalone 'wet' token."""
+    return bool(_WET_TOKEN.search(_wetdry_words(filename)))
+
+
+def find_dry_stems(files):
+    """Return the subset of `files` that are the DRY half of a wet/dry pair.
+
+    Strict pairing (per Sam): a file is parked as dry ONLY when it carries a
+    'dry' token AND another file with the SAME base identity carries a 'wet'
+    token — i.e. the element was supplied explicitly as both wet and dry. A dry
+    stem with no matching wet sibling (or a plain sibling that doesn't say
+    'wet') is left alone — it IS the working track. The caller restricts this
+    to vocals; the rule only applies there.
+
+    `files` may be Paths or filename strings; the same objects are returned.
+    """
+    by_key = {}
+    for f in files:
+        by_key.setdefault(_element_base_key(f), []).append(f)
+    dry = []
+    for f in files:
+        if is_dry_stem(f):
+            siblings = by_key.get(_element_base_key(f), [])
+            if any(s is not f and is_wet_stem(s) for s in siblings):
+                dry.append(f)
+    return dry
+
+
 def _normalize_stem_name(stem_name):
     """Normalize a stem filename for descriptor extraction."""
     name = re.sub(r"([a-z])([A-Z])", r"\1 \2", stem_name)

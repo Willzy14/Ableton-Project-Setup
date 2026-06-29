@@ -247,8 +247,16 @@ def _rms_windows_np(raw, n_ch, bps, is_float, window_frames):
     return out
 
 
+# Absolute floor (dB rel. full scale) below which a whole stem counts as having
+# no audio in it — an empty/silent export. find_audio_regions uses a RELATIVE
+# threshold (peak - headroom) so a silent file reads as one big region, not as
+# empty; this absolute peak floor is what flags a truly silent stem.
+SILENCE_FLOOR_DB = -60.0
+
+
 def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
-                       min_gap_sec=2.5, tail_sec=1.0, head_sec=0.0):
+                       min_gap_sec=2.5, tail_sec=1.0, head_sec=0.0,
+                       return_peak=False):
     """Find regions of audio content in a WAV file.
 
     Uses an adaptive threshold: peak_rms - headroom_db. A wide headroom (55 dB)
@@ -257,7 +265,8 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
     small tail_sec safety margin catches the very end. Active windows separated
     by less than min_gap_sec are merged into one region (so a continuous groove
     stays one clip; real silence >min_gap splits into tight separate clips).
-    Returns a list of (start_sec, end_sec) tuples.
+    Returns a list of (start_sec, end_sec) tuples, or (regions, peak_rms_db) when
+    return_peak=True (peak window RMS in dB — below SILENCE_FLOOR_DB = silent).
     """
     import struct as _struct
     import math as _math
@@ -359,21 +368,22 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
                         min(len(active) * window_sec, total_sec)))
 
     if not regions:
-        return [(0.0, total_sec)]
+        result = [(0.0, total_sec)]
+    else:
+        if tail_sec > 0 or head_sec > 0:
+            padded = []
+            for i, (start, end) in enumerate(regions):
+                new_start = max(start - head_sec, 0.0)
+                if i > 0:
+                    new_start = max(new_start, padded[-1][1])
+                new_end = min(end + tail_sec, total_sec)
+                if i + 1 < len(regions):
+                    new_end = min(new_end, regions[i + 1][0])
+                padded.append((new_start, new_end))
+            regions = padded
+        result = regions
 
-    if tail_sec > 0 or head_sec > 0:
-        padded = []
-        for i, (start, end) in enumerate(regions):
-            new_start = max(start - head_sec, 0.0)
-            if i > 0:
-                new_start = max(new_start, padded[-1][1])
-            new_end = min(end + tail_sec, total_sec)
-            if i + 1 < len(regions):
-                new_end = min(new_end, regions[i + 1][0])
-            padded.append((new_start, new_end))
-        regions = padded
-
-    return regions
+    return (result, peak_rms) if return_peak else result
 
 
 def _build_clip_xml(stem_name, clip_color, rel_path, abs_path, sample_count,
@@ -1238,8 +1248,10 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir,
                 j += 1
             runs.append({
                 "name": stems[i].get("group_name", "Group"),
-                "color": stems[i]["color"],
+                "color": stems[i].get("group_color", stems[i]["color"]),
                 "indices": list(range(i, j)),
+                "muted": stems[i].get("group_muted", False),
+                "unfolded": stems[i].get("group_unfolded", True),
             })
             i = j
         else:
@@ -1259,7 +1271,7 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir,
         if first_tidx < len(audio_g):
             insert_group_track(
                 lines, audio_g[first_tidx]["start"], run["name"], group_id,
-                color=run["color"], muted=False, unfolded=True,
+                color=run["color"], muted=run["muted"], unfolded=run["unfolded"],
             )
 
     tracks_to_remove = []

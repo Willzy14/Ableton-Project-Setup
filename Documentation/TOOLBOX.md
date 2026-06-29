@@ -71,10 +71,10 @@ py -3.13 Source\validate_project.py "<project-folder-or-als>" --expect-tempo 160
 
 - `Source/project_builder.py` - Orchestrates folder scan, classification, BPM detection, project folder creation, flat-ref bounce, and ALS patching.
 - `Config/project_builder.json` - Local defaults for template path, output base, ML interpreter, and ML enablement. Environment variables override it.
-- `Source/stem_classifier.py` - Filename-based stem classification and display track-name generation.
+- `Source/stem_classifier.py` - Filename-based stem classification and display track-name generation. Also `find_dry_stems()` — detects explicit WET+DRY vocal pairs (used vocals-only by the builder) so the dry copy can be parked.
 - `Source/audio_ml_classify.py` - Heavy second-stage audio classifier for unnamed stems; uses Demucs and Whisper when installed.
 - `Source/stem_analysis.py` - Lightweight numpy audio analysis for full-mix and group-bus detection.
-- `Source/als_patcher.py` - Raw-text ALS patching engine. Do not replace with XML parsing.
+- `Source/als_patcher.py` - Raw-text ALS patching engine. Do not replace with XML parsing. `find_audio_regions(return_peak=True)` also returns peak window RMS (silence floor `SILENCE_FLOOR_DB`); group runs support per-run muted/unfolded/colour (used by the parked "Dry" group).
 - `Source/bounce.py` - Flat-reference WAV summing, numpy fast path plus stdlib fallback.
 - `Source/versions.py` - Multi-version package detection.
 

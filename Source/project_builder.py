@@ -17,8 +17,10 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from stem_classifier import classify_stems, classify_stem, apply_track_names, CATEGORIES
-from als_patcher import patch_project, find_audio_regions, CLIP_START_BEATS
+from stem_classifier import (classify_stems, classify_stem, apply_track_names,
+                             find_dry_stems, CATEGORIES)
+from als_patcher import (patch_project, find_audio_regions, CLIP_START_BEATS,
+                         SILENCE_FLOOR_DB)
 from bpm_detector import detect_bpm
 from bounce import sum_stems_to_wav
 from stem_analysis import audio_label, find_group_buses
@@ -38,6 +40,15 @@ REF_TRACK_COLOR = 14
 # If it's not the peach you want, change this number — the palette is a 14x5
 # grid, indices 0-69 left-to-right, top-to-bottom.
 BUS_TRACK_COLOR = 2
+
+# Colour for the parked "Dry" group (the dry half of any wet/dry pair, kept
+# muted underneath the wet for recall). 37 = grey — reads as inactive/parked.
+DRY_GROUP_COLOR = 37
+
+# Colour for empty/silent stems — a stem with no audio in it, moved to the very
+# bottom with its own colour so it's obviously a dead export. 12 = a distinct
+# tone; change the index if you'd prefer another (palette is 0-69).
+SILENT_TRACK_COLOR = 12
 DEFAULT_OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\0.1---GIT HUB---\Ableton Project Setup")
 
 # Backwards-compatible names for older scripts importing these constants.
@@ -404,7 +415,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                 shutil.copy2(f, dest)
             # FX (risers/uplifters build from near-silence) get a lead-in so
             # the ramp isn't trimmed; everything else trims tight at the front.
-            regions = find_audio_regions(dest, head_sec=2.0 if cat == "fx" else 0.0)
+            regions, peak_db = find_audio_regions(
+                dest, head_sec=2.0 if cat == "fx" else 0.0, return_peak=True)
             stems.append({
                 "name": f.stem,
                 "category": cat,
@@ -412,7 +424,23 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                 "file_path": dest,
                 "rel_path": "Audio/" + f.name,
                 "regions": regions,
+                "silent": peak_db < SILENCE_FLOOR_DB,
             })
+
+    # --- Empty/silent stems --------------------------------------------------
+    # A stem with no audio in it (peak below the silence floor) is moved to the
+    # very bottom and given its own colour so it's obviously a dead export.
+    # Pulled out of the working layout and the flat-ref sum (it adds nothing).
+    silent_tracks = []
+    if any(s.get("silent") for s in stems):
+        silent_stems = [s for s in stems if s.get("silent")]
+        stems = [s for s in stems if not s.get("silent")]
+        print("\nEmpty stems (no audio) — moved to the bottom, own colour:")
+        for s in silent_stems:
+            print("  " + s["file_path"].name)
+            s["category"] = "silent"
+            s["color"] = SILENT_TRACK_COLOR
+        silent_tracks = silent_stems
 
     # --- Group-bus detection -------------------------------------------------
     # A stem that is the (near-exact) sum of >=2 other stems is a group/sub-mix
@@ -439,10 +467,45 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                 "regions": None,
             })
 
+    # --- Wet/dry (VOCALS ONLY) ------------------------------------------------
+    # Per Sam, the wet/dry rule applies ONLY to vocals, and only when the same
+    # vocal is supplied as an explicit pair — one stem says WET, one says DRY.
+    # Keep WET on (normal working track) and park the DRY copy in a muted "Dry"
+    # group underneath for recall, OUT of the flat-ref sum (summing wet+dry of
+    # one element double-counts it).
+    vocal_files = [s["file_path"] for s in stems if s["category"] == "vocals"]
+    dry_set = set(find_dry_stems(vocal_files))
+    dry_tracks = []
+    if dry_set:
+        dry_stems = [s for s in stems if s["file_path"] in dry_set]
+        stems = [s for s in stems if s["file_path"] not in dry_set]
+        print("\nWet/dry: these are the DRY half of a pair — kept OUT of the "
+              "flat-ref sum, parked (muted) in a 'Dry' group underneath:")
+        for s in dry_stems:
+            print("  " + s["file_path"].name)
+        dry_tracks = dry_stems
+
     apply_track_names(stems)
     for s in stems:
         s["clip_name"] = s["file_path"].stem   # clip label = original source filename
         s["name"] = s["display_name"]          # track label = simplified display name
+
+    if dry_tracks:
+        apply_track_names(dry_tracks)
+        for s in dry_tracks:
+            s["clip_name"] = s["file_path"].stem
+            s["name"] = s["display_name"]
+            s["group_key"] = "dry"             # one shared run -> one "Dry" group
+            s["group_name"] = "Dry"
+            s["group_muted"] = True            # group muted = whole dry submix off
+            s["group_unfolded"] = False        # collapsed: tucked away
+            s["group_color"] = DRY_GROUP_COLOR
+
+    if silent_tracks:
+        apply_track_names(silent_tracks)
+        for s in silent_tracks:
+            s["clip_name"] = s["file_path"].stem
+            s["name"] = s["display_name"]
 
     # Tag groupable categories (2+ stems) so patch_project wraps them in a
     # GroupTrack. kick/bass/sends never group (CATEGORIES[cat]["group"] is False).
@@ -495,7 +558,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "regions": None,
     })
 
-    all_stems = stems + ref_tracks + bus_tracks
+    all_stems = stems + dry_tracks + ref_tracks + bus_tracks + silent_tracks
 
     print("Classification summary:")
     cat_counts = {}
@@ -503,8 +566,12 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         cat_counts[s["category"]] = cat_counts.get(s["category"], 0) + 1
     for cat in sorted(cat_counts.keys(), key=lambda c: CATEGORIES[c]["order"]):
         print("  " + cat.upper() + ": " + str(cat_counts[cat]) + " stems")
+    if dry_tracks:
+        print("  DRY (parked, muted group): " + str(len(dry_tracks)) + " stems")
     print("  REF TRACKS: " + str(len(ref_tracks)) + " (flat bounce + "
           + str(len(references)) + " supplied)")
+    if silent_tracks:
+        print("  SILENT (empty, bottom, own colour): " + str(len(silent_tracks)) + " stems")
     if bus_tracks:
         print("  GROUP BUSES: " + str(len(bus_tracks)) + " (parked muted at bottom)")
     print("  TOTAL TRACKS: " + str(len(all_stems)) + " (+ Session Time)")
