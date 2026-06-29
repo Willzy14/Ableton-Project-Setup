@@ -148,6 +148,26 @@
         "Implement same-folder name-token versions",
         "Consider applying wet/dry + silent-stem handling to the multi-version build path too"
       ]
+    },
+    {
+      "date": "2026-06-29",
+      "summary": "Studio App prototype built (Studio App/): PyWebView desktop front-end wrapping build_project - switchable colour PROFILES (per user/partner, global + per-project), one-time output folder, multi-project queue (folder/WAV/AIFF/ZIP, +add, title + optional BPM), Build-all batch runner with per-project validate + live status. Sleek dark UI. Engine hook build_project(category_colors=...) threaded through multiversion. Easy-update mechanism added (VERSION 0.1.0, UI badge, Update button). Distribution DECIDED: Dropbox-sync model rejected (not all machines have Dropbox / Sam not logged in) -> self-contained EXE auto-updating from GitHub, code kept PRIVATE via a public releases feed (latest.json + exe) so no token is baked into the EXE; ship ML-off. Nested sub-groups spec LOCKED: singer-first, vocals + offered for drums/music, needs nested GroupTracks. Validated: test_studio_app 7/7, backend smoke, full suite green. Native window + EXE packaging still need a real machine.",
+      "files_changed": [
+        "Studio App/ (app.py, engine_api.py, Web/*, VERSION, Run Studio App.bat, requirements.txt, README.md, .gitignore)",
+        "Source/project_builder.py",
+        "Tests/test_studio_app.py",
+        "Documentation/AI_CONTEXT.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md",
+        ".github/copilot-instructions.md"
+      ],
+      "pending": [
+        "Sam: run the Studio App (pip install pywebview; Run Studio App.bat) and feed back on look/feel",
+        "Build nested sub-groups (spec locked: singer-first; vocals + drums/music; nested GroupTracks)",
+        "Package Studio App as EXE + latest.json auto-updater + public releases feed (code stays private)",
+        "Studio App real OS drag-drop paths; logo/branding pass",
+        "ML subprocess cleanup/timeouts (Codex handoff list)"
+      ]
     }
   ],
   "decisions": [
