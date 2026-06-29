@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Stem → Ableton</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- ░░ Top bar ░░ -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">◑</div>
+        <div class="brand-text">
+          <div class="brand-title">Stem<span>→</span>Ableton</div>
+          <div class="brand-sub">studio project setup</div>
+        </div>
+      </div>
+
+      <div class="topbar-controls">
+        <label class="field">
+          <span class="field-label">Profile</span>
+          <select id="profileSelect" class="select"></select>
+        </label>
+        <button id="coloursBtn" class="btn ghost">🎨 Colours</button>
+        <label class="field grow">
+          <span class="field-label">Output folder</span>
+          <div class="folder-row">
+            <span id="outputFolder" class="folder-path" title="">—</span>
+            <button id="changeFolderBtn" class="btn tiny">Change</button>
+          </div>
+        </label>
+      </div>
+    </header>
+
+    <!-- ░░ Project queue ░░ -->
+    <main class="queue-wrap">
+      <div id="queue" class="queue"></div>
+      <button id="addProjectBtn" class="add-project">
+        <span class="plus">+</span> Add another project
+      </button>
+    </main>
+
+    <!-- ░░ Action bar ░░ -->
+    <footer class="actionbar">
+      <div id="summary" class="summary">No projects queued</div>
+      <button id="goBtn" class="btn go" disabled>
+        Build all <span class="go-sub">— go make a cup of tea ☕</span>
+      </button>
+    </footer>
+  </div>
+
+  <!-- ░░ Colours modal ░░ -->
+  <div id="coloursModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Colour profile</h2>
+        <button id="closeColours" class="icon-btn">✕</button>
+      </div>
+      <div class="profile-bar">
+        <select id="editProfileSelect" class="select"></select>
+        <button id="newProfileBtn" class="btn tiny">+ New</button>
+        <button id="deleteProfileBtn" class="btn tiny danger">Delete</button>
+      </div>
+      <label class="field">
+        <span class="field-label">Profile name</span>
+        <input id="profileNameInput" class="input" type="text" />
+      </label>
+      <div id="colourRows" class="colour-rows"></div>
+      <div class="modal-foot">
+        <button id="saveProfileBtn" class="btn go">Save profile</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ░░ Progress overlay ░░ -->
+  <div id="progressOverlay" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Building your projects</h2>
+        <button id="closeProgress" class="icon-btn hidden">✕</button>
+      </div>
+      <div id="progressList" class="progress-list"></div>
+      <div class="modal-foot">
+        <div id="progressNote" class="progress-note">Working… you can leave this running.</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

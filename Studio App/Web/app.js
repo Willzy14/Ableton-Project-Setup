@@ -1,0 +1,366 @@
+/* Stem → Ableton — front-end logic. Vanilla JS, talks to engine_api.Api. */
+"use strict";
+
+const State = {
+  projects: [],
+  palette: [],
+  colorCategories: [],
+  profiles: [],
+  settings: { output_folder: "", active_profile: "" },
+  editProfile: null,   // working copy in the colours modal
+  polling: null,
+};
+
+let nextId = 1;
+const $ = (id) => document.getElementById(id);
+
+/* ---- pywebview bridge ---- */
+function api() {
+  if (window.pywebview && window.pywebview.api) return window.pywebview.api;
+  return null; // running in a plain browser preview
+}
+
+window.addEventListener("pywebviewready", init);
+// Fallback for browser preview (no pywebview): still render the shell.
+setTimeout(() => { if (!State.booted) init(); }, 400);
+
+async function init() {
+  if (State.booted) return;
+  State.booted = true;
+  const a = api();
+  if (a) {
+    const boot = await a.get_bootstrap();
+    State.palette = boot.palette;
+    State.colorCategories = boot.colorCategories;
+    State.profiles = boot.profiles;
+    State.settings = boot.settings;
+  } else {
+    // preview-only defaults
+    State.palette = Array.from({ length: 70 }, (_, i) => `hsl(${i * 5},70%,55%)`);
+    State.colorCategories = ["drums", "bass", "music", "vocals", "fx", "sends"];
+    State.profiles = [{ name: "Default", colors: {} }];
+    State.settings = { output_folder: "(set in app)", active_profile: "Default" };
+  }
+  hydrateTopbar();
+  if (State.projects.length === 0) addProject();
+  wireGlobalButtons();
+}
+
+/* ---- top bar ---- */
+function hydrateTopbar() {
+  const sel = $("profileSelect");
+  sel.innerHTML = "";
+  State.profiles.forEach((p) => sel.add(new Option(p.name, p.name)));
+  sel.value = State.settings.active_profile || State.profiles[0].name;
+  sel.onchange = async () => {
+    State.settings.active_profile = sel.value;
+    const a = api(); if (a) await a.set_setting("active_profile", sel.value);
+    renderQueue(); // refresh per-card default profile
+  };
+  const f = $("outputFolder");
+  f.textContent = State.settings.output_folder || "—";
+  f.title = State.settings.output_folder || "";
+}
+
+function wireGlobalButtons() {
+  $("addProjectBtn").onclick = addProject;
+  $("coloursBtn").onclick = openColours;
+  $("closeColours").onclick = () => $("coloursModal").classList.add("hidden");
+  $("changeFolderBtn").onclick = changeFolder;
+  $("goBtn").onclick = runBatch;
+  $("saveProfileBtn").onclick = saveProfile;
+  $("newProfileBtn").onclick = newProfile;
+  $("deleteProfileBtn").onclick = deleteProfile;
+  $("closeProgress").onclick = () => $("progressOverlay").classList.add("hidden");
+}
+
+async function changeFolder() {
+  const a = api(); if (!a) return;
+  const r = await a.pick_output_folder();
+  if (r && r.ok) {
+    State.settings.output_folder = r.folder;
+    hydrateTopbar();
+  }
+}
+
+/* ---- project queue ---- */
+function addProject() {
+  State.projects.push({
+    id: nextId++, paths: [], title: "",
+    profile: State.settings.active_profile, bpm: "",
+  });
+  renderQueue();
+}
+
+function removeProject(id) {
+  State.projects = State.projects.filter((p) => p.id !== id);
+  if (State.projects.length === 0) addProject();
+  renderQueue();
+}
+
+function renderQueue() {
+  const q = $("queue");
+  q.innerHTML = "";
+  State.projects.forEach((proj) => q.appendChild(renderCard(proj)));
+  updateSummary();
+}
+
+function renderCard(proj) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  // dropzone
+  const dz = document.createElement("div");
+  dz.className = "dropzone" + (proj.paths.length ? " filled" : "");
+  dz.innerHTML = proj.paths.length
+    ? `<div class="dz-icon">✓</div>
+       <div class="dz-main">${proj.paths.length} item${proj.paths.length > 1 ? "s" : ""} ready</div>
+       <div class="dz-sub">${shortPaths(proj.paths)}</div>
+       <div class="dz-sub">click to change</div>`
+    : `<div class="dz-icon">⬇</div>
+       <div class="dz-main">Drop stems here</div>
+       <div class="dz-sub">folder, WAV / AIFF, or .zip — click to browse</div>`;
+  dz.onclick = () => choosePaths(proj.id);
+  wireDrop(dz, proj.id);
+
+  // fields
+  const fields = document.createElement("div");
+  fields.className = "card-fields";
+  const title = document.createElement("input");
+  title.className = "input title";
+  title.type = "text";
+  title.placeholder = "Artist - Title [Label]";
+  title.value = proj.title;
+  title.oninput = () => { proj.title = title.value; updateSummary(); };
+
+  const row = document.createElement("div");
+  row.className = "card-row";
+
+  const profWrap = document.createElement("label");
+  profWrap.className = "field";
+  profWrap.innerHTML = `<span class="field-label">Colour profile</span>`;
+  const prof = document.createElement("select");
+  prof.className = "select";
+  State.profiles.forEach((p) => prof.add(new Option(p.name, p.name)));
+  prof.value = proj.profile && State.profiles.some((p) => p.name === proj.profile)
+    ? proj.profile : State.settings.active_profile;
+  proj.profile = prof.value;
+  prof.onchange = () => { proj.profile = prof.value; };
+  profWrap.appendChild(prof);
+
+  const bpmWrap = document.createElement("label");
+  bpmWrap.className = "field bpm-field";
+  bpmWrap.innerHTML = `<span class="field-label">BPM (blank = auto)</span>`;
+  const bpm = document.createElement("input");
+  bpm.className = "input";
+  bpm.type = "text";
+  bpm.placeholder = "auto";
+  bpm.value = proj.bpm;
+  bpm.oninput = () => { proj.bpm = bpm.value.trim(); };
+  bpmWrap.appendChild(bpm);
+
+  row.append(profWrap, bpmWrap);
+  fields.append(title, row);
+
+  // side
+  const side = document.createElement("div");
+  side.className = "card-side";
+  const rm = document.createElement("button");
+  rm.className = "remove-btn";
+  rm.textContent = "✕";
+  rm.title = "Remove project";
+  rm.onclick = () => removeProject(proj.id);
+  side.appendChild(rm);
+
+  card.append(dz, fields, side);
+  return card;
+}
+
+function shortPaths(paths) {
+  const names = paths.map((p) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop());
+  return names.length <= 2 ? names.join(", ") : names.slice(0, 2).join(", ") + ` +${names.length - 2}`;
+}
+
+async function choosePaths(id) {
+  const a = api();
+  const proj = State.projects.find((p) => p.id === id);
+  if (!a) { alert("Folder picking works in the app window."); return; }
+  // Default to a folder pick (most packs are a folder); fall back to files.
+  const r = await a.pick_paths("folder");
+  if (r && r.ok && r.paths.length) {
+    proj.paths = r.paths;
+  } else {
+    const rf = await a.pick_paths("files");
+    if (rf && rf.ok && rf.paths.length) proj.paths = rf.paths;
+  }
+  renderQueue();
+}
+
+function wireDrop(dz, id) {
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+  dz.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dz.classList.remove("drag");
+    const proj = State.projects.find((p) => p.id === id);
+    // Some webview backends expose a real path on dropped File objects.
+    const paths = [];
+    for (const f of e.dataTransfer.files) {
+      if (f.path) paths.push(f.path);
+    }
+    if (paths.length) { proj.paths = paths; renderQueue(); }
+    else { choosePaths(id); } // no real paths from the OS drag — open picker
+  });
+}
+
+function updateSummary() {
+  const ready = State.projects.filter((p) => p.paths.length && p.title.trim());
+  const s = $("summary");
+  if (ready.length === 0) {
+    s.innerHTML = "No projects ready — drop stems and add a title";
+  } else {
+    s.innerHTML = `<b>${ready.length}</b> project${ready.length > 1 ? "s" : ""} ready to build`;
+  }
+  $("goBtn").disabled = ready.length === 0;
+}
+
+/* ---- colours modal ---- */
+function openColours() {
+  const name = State.settings.active_profile;
+  loadEditProfile(name);
+  const sel = $("editProfileSelect");
+  sel.innerHTML = "";
+  State.profiles.forEach((p) => sel.add(new Option(p.name, p.name)));
+  sel.value = name;
+  sel.onchange = () => loadEditProfile(sel.value);
+  $("coloursModal").classList.remove("hidden");
+}
+
+function loadEditProfile(name) {
+  const p = State.profiles.find((x) => x.name === name) || State.profiles[0];
+  State.editProfile = JSON.parse(JSON.stringify(p));
+  $("profileNameInput").value = State.editProfile.name;
+  renderColourRows();
+}
+
+function renderColourRows() {
+  const wrap = $("colourRows");
+  wrap.innerHTML = "";
+  State.colorCategories.forEach((cat) => {
+    const row = document.createElement("div");
+    row.className = "colour-row";
+    const label = document.createElement("div");
+    label.className = "cat-name";
+    label.textContent = cat;
+    const grid = document.createElement("div");
+    grid.className = "swatches";
+    State.palette.forEach((hex, idx) => {
+      const sw = document.createElement("div");
+      sw.className = "swatch" + (State.editProfile.colors[cat] === idx ? " sel" : "");
+      sw.style.background = hex;
+      sw.title = `index ${idx}`;
+      sw.onclick = () => {
+        State.editProfile.colors[cat] = idx;
+        renderColourRows();
+      };
+      grid.appendChild(sw);
+    });
+    row.append(label, grid);
+    wrap.appendChild(row);
+  });
+}
+
+async function saveProfile() {
+  const a = api();
+  State.editProfile.name = $("profileNameInput").value.trim() || "Profile";
+  if (a) {
+    const r = await a.save_profile(State.editProfile);
+    if (r && r.ok) State.profiles = r.profiles;
+  } else {
+    const i = State.profiles.findIndex((p) => p.name === State.editProfile.name);
+    if (i >= 0) State.profiles[i] = State.editProfile; else State.profiles.push(State.editProfile);
+  }
+  State.settings.active_profile = State.editProfile.name;
+  const a2 = api(); if (a2) await a2.set_setting("active_profile", State.editProfile.name);
+  $("coloursModal").classList.add("hidden");
+  hydrateTopbar();
+  renderQueue();
+}
+
+function newProfile() {
+  State.editProfile = { name: "New profile", colors: {} };
+  $("profileNameInput").value = State.editProfile.name;
+  renderColourRows();
+}
+
+async function deleteProfile() {
+  const a = api();
+  const name = State.editProfile.name;
+  if (a) {
+    const r = await a.delete_profile(name);
+    if (r && r.ok) State.profiles = r.profiles;
+  } else {
+    State.profiles = State.profiles.filter((p) => p.name !== name);
+    if (!State.profiles.length) State.profiles.push({ name: "Default", colors: {} });
+  }
+  State.settings.active_profile = State.profiles[0].name;
+  $("coloursModal").classList.add("hidden");
+  hydrateTopbar();
+  renderQueue();
+}
+
+/* ---- batch build ---- */
+async function runBatch() {
+  const a = api();
+  const ready = State.projects.filter((p) => p.paths.length && p.title.trim());
+  if (!ready.length) return;
+  const payload = ready.map((p) => ({
+    paths: p.paths, title: p.title.trim(), profile: p.profile, bpm: p.bpm || null,
+  }));
+  if (!a) { alert("Building runs in the app window."); return; }
+
+  $("progressOverlay").classList.remove("hidden");
+  $("closeProgress").classList.add("hidden");
+  $("progressNote").textContent = "Working… you can leave this running. ☕";
+  const r = await a.run_batch(payload);
+  if (r && !r.ok) { $("progressNote").textContent = r.error; return; }
+  pollStatus();
+}
+
+function pollStatus() {
+  const a = api();
+  clearInterval(State.polling);
+  State.polling = setInterval(async () => {
+    const s = await a.get_status();
+    renderProgress(s.projects);
+    if (!s.running) {
+      clearInterval(State.polling);
+      const done = s.projects.filter((p) => p.state === "done").length;
+      const failed = s.projects.filter((p) => p.state === "failed").length;
+      const warn = s.projects.filter((p) => p.state === "warn").length;
+      $("progressNote").textContent =
+        `Finished — ${done} built` + (warn ? `, ${warn} to check` : "") + (failed ? `, ${failed} failed` : "") + ". Open your output folder.";
+      $("closeProgress").classList.remove("hidden");
+    }
+  }, 700);
+}
+
+function renderProgress(projects) {
+  const list = $("progressList");
+  list.innerHTML = "";
+  projects.forEach((p) => {
+    const item = document.createElement("div");
+    item.className = "progress-item";
+    const left = p.state === "running"
+      ? `<div class="spinner"></div>`
+      : `<span class="chip ${p.state}">${p.state}</span>`;
+    item.innerHTML = `${left}
+      <div class="pi-title">${escapeHtml(p.title)}</div>
+      <div class="pi-msg">${escapeHtml(p.message || "")}</div>`;
+    list.appendChild(item);
+  });
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}

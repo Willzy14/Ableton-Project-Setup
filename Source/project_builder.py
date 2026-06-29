@@ -301,7 +301,7 @@ def _write_ml_report(report_path, ordered_paths, ml_results):
 
 
 def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
-                  use_ml=None, project_name=None):
+                  use_ml=None, project_name=None, category_colors=None):
     """Build a complete Ableton project from a folder of stems.
 
     Args:
@@ -312,6 +312,9 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         bpm: Project tempo (int/float). Pass None or "auto" to detect it from
             the kick/percussion stems.
         output_base: Where to create the project folder (defaults to OUTPUT_BASE)
+        category_colors: optional {category: palette_index} overriding the
+            default working-track colours (kick/drums/bass/music/vocals/fx/
+            sends) — used by the studio UI's per-user/partner colour profiles.
 
     Returns:
         Path to the created project folder
@@ -323,10 +326,16 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     if use_ml is None:
         use_ml = get_enable_ml_classifier()
 
+    def cat_color(cat):
+        if category_colors and cat in category_colors:
+            return category_colors[cat]
+        return CATEGORIES[cat]["color"]
+
     versions = detect_versions(stem_folder)
     if versions:
         return build_multiversion_project(
-            versions, artist, title, label, bpm, output_base, use_ml=use_ml
+            versions, artist, title, label, bpm, output_base, use_ml=use_ml,
+            category_colors=category_colors,
         )
 
     if project_name is None:
@@ -408,7 +417,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     print("\nCopying stems and detecting audio regions...")
     stems = []
     for cat in sorted(classified.keys(), key=lambda c: CATEGORIES[c]["order"]):
-        color = CATEGORIES[cat]["color"]
+        color = cat_color(cat)
         for f in classified[cat]:
             dest = audio_folder / f.name
             if not dest.exists():
@@ -596,7 +605,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
 
 def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
-                           ml_report_path=None):
+                           ml_report_path=None, category_colors=None):
     """Classify + region-detect + bus/full-mix-detect ONE version's files.
 
     Copies files into version_audio_dir. Returns (mix_stems, ref_stems,
@@ -649,7 +658,7 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
 
     mix_stems = []
     for cat in sorted(classified.keys(), key=lambda c: CATEGORIES[c]["order"]):
-        color = CATEGORIES[cat]["color"]
+        color = (category_colors or {}).get(cat, CATEGORIES[cat]["color"])
         for f in classified[cat]:
             dest = _copy(f)
             regions = find_audio_regions(dest, head_sec=2.0 if cat == "fx" else 0.0)
@@ -672,7 +681,7 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
 
 
 def build_multiversion_project(versions, artist, title, label, bpm, output_base,
-                               use_ml=True):
+                               use_ml=True, category_colors=None):
     """Build a project from multiple versions (extended / radio edit / dub ...).
 
     Each element shares ONE track across versions; versions are laid out as
@@ -699,6 +708,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         mix, refs, buses = _process_version_files(
             v["files"], audio_folder / vname, rel_prefix,
             use_ml=use_ml, ml_report_path=report_path,
+            category_colors=category_colors,
         )
         print("  mix=" + str(len(mix)) + " refs=" + str(len(refs)) + " buses=" + str(len(buses)))
         pv.append({"name": v["name"], "vname": vname, "rel_prefix": rel_prefix,

@@ -1,0 +1,9 @@
+# Per-machine / per-user runtime state — never commit (repo is Dropbox-synced,
+# so committing these would conflict across studio machines).
+Config/profiles.json
+Config/settings.json
+
+# PyInstaller build output
+build/
+dist/
+*.spec

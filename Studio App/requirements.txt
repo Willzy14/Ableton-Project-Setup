@@ -1,0 +1,8 @@
+# Studio App (PyWebView desktop front-end) — install into the 3.13 env:
+#   py -3.13 -m pip install -r "Studio App/requirements.txt"
+pywebview>=5.0          # native window + JS bridge
+pyinstaller>=6.0        # build the single-file .exe
+
+# The engine itself uses numpy (fast paths) and, for AIFF ingest + the optional
+# ML classifier, soundfile / torch / demucs / faster-whisper. Those are already
+# in Sam's 3.13 env. AIFF support needs `soundfile`; ML is optional.
