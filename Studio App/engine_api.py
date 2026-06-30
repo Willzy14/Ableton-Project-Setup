@@ -25,7 +25,8 @@ REPO_DIR = APP_DIR.parent
 SOURCE_DIR = REPO_DIR / "Source"
 sys.path.insert(0, str(SOURCE_DIR))
 
-from project_builder import build_project, get_output_base  # noqa: E402
+from project_builder import (build_project, get_output_base,  # noqa: E402
+                             SUBGROUP_CATEGORIES)
 from stem_classifier import CATEGORIES, AUDIO_EXTENSIONS    # noqa: E402
 from validate_project import validate_path                 # noqa: E402
 
@@ -102,6 +103,10 @@ def load_settings():
         data["output_folder"] = str(get_output_base())
     if not data.get("active_profile"):
         data["active_profile"] = load_profiles()[0]["name"]
+    if "subgroups" not in data:
+        # Which categories get clustered into nested sub-groups (singer under
+        # Vox, Kit/Percussion, instrument families). Default = all on.
+        data["subgroups"] = list(SUBGROUP_CATEGORIES)
     return data
 
 
@@ -227,11 +232,27 @@ class Api:
         }
 
     def update_app(self):
-        """Pull the latest code (backstop — Dropbox usually syncs it already).
+        """Check for a newer version.
 
-        Runs `git pull` in the repo so a studio machine can grab the newest
-        version on demand; restart the app to load it. No-op if not a git repo.
+        Packaged EXE: query the public `latest.json` feed (configurable in
+        update_feed.json). If a newer version is out, return its details so the
+        UI can confirm before apply_update() swaps the EXE. Running from source:
+        fall back to `git pull` (Dropbox usually syncs it already anyway).
         """
+        import updater
+        if updater.is_frozen():
+            if not updater.feed_url():
+                return {"ok": False, "error": "Update feed not set up yet "
+                        "(no URL in update_feed.json)."}
+            info = updater.check_for_update(get_version())
+            if not info.get("ok"):
+                return info
+            if not info.get("available"):
+                return {"ok": True, "changed": False, "version": get_version()}
+            return {"ok": True, "changed": True, "needsApply": True,
+                    "latest": info["latest"], "download_url": info["download_url"],
+                    "notes": info.get("notes", ""), "version": get_version()}
+
         if not (REPO_DIR / ".git").exists():
             return {"ok": False, "error": "Not a git checkout — updates arrive via Dropbox sync."}
         try:
@@ -244,6 +265,24 @@ class Api:
                     "message": msg, "version": get_version()}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
+
+    def apply_update(self, download_url):
+        """Download the new EXE, spawn the detached swap script, then quit so it
+        can replace and relaunch us. Only meaningful in the packaged app.
+        """
+        import updater
+        res = updater.apply_update(download_url)
+        if res.get("ok") and res.get("relaunching"):
+            def _quit():
+                try:
+                    if self._window is not None:
+                        self._window.destroy()
+                    else:
+                        os._exit(0)
+                except Exception:  # noqa: BLE001
+                    os._exit(0)
+            threading.Timer(0.6, _quit).start()
+        return res
 
     def save_profile(self, profile):
         profiles = load_profiles()
@@ -317,6 +356,13 @@ class Api:
         settings = load_settings()
         profiles = {p["name"]: p for p in load_profiles()}
         output_base = settings.get("output_folder") or str(get_output_base())
+        # Global sub-group preference (Vocals/Drums/Music checkboxes). A list
+        # (possibly empty to disable); None falls back to the engine default.
+        subgroups = settings.get("subgroups")
+        # The packaged EXE ships ML-off — and must NOT try to spawn itself as an
+        # ML subprocess (sys.executable is the GUI). Force ML off when frozen.
+        import updater
+        use_ml = False if updater.is_frozen() else None
 
         for i, proj in enumerate(projects):
             st = self._status[i]
@@ -339,6 +385,7 @@ class Api:
                     str(stem_folder), artist, ttl, label,
                     bpm=bpm, output_base=output_base,
                     project_name=title, category_colors=colors,
+                    subgroup_categories=subgroups, use_ml=use_ml,
                 )
                 st["folder"] = str(folder)
 

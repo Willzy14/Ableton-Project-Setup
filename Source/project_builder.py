@@ -86,6 +86,13 @@ def _configured_path(env_name, config_key, default):
 
 
 def get_template_path():
+    # In a packaged EXE the template ALS is bundled alongside the code (see
+    # Studio App/build_exe.py), so builds work on a machine without the
+    # template in the User Library. An env/config override still wins.
+    if getattr(sys, "frozen", False) and not os.environ.get("ABLETON_TEMPLATE_PATH"):
+        bundled = Path(getattr(sys, "_MEIPASS", "")) / "template.als"
+        if bundled.exists():
+            return bundled
     return _configured_path("ABLETON_TEMPLATE_PATH", "template_path", DEFAULT_TEMPLATE_PATH)
 
 

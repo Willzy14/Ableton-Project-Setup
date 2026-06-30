@@ -40,11 +40,13 @@ async function init() {
     State.palette = Array.from({ length: 70 }, (_, i) => `hsl(${i * 5},70%,55%)`);
     State.colorCategories = ["drums", "bass", "music", "vocals", "fx", "sends"];
     State.profiles = [{ name: "Default", colors: {} }];
-    State.settings = { output_folder: "(set in app)", active_profile: "Default" };
+    State.settings = { output_folder: "(set in app)", active_profile: "Default",
+                       subgroups: ["vocals", "drums", "music"] };
     State.version = "preview";
   }
   const vb = $("versionBadge"); if (vb) vb.textContent = "v" + (State.version || "—");
   hydrateTopbar();
+  hydrateSubgroups();
   if (State.projects.length === 0) addProject();
   wireGlobalButtons();
 }
@@ -65,6 +67,29 @@ function hydrateTopbar() {
   f.title = State.settings.output_folder || "";
 }
 
+/* ---- sub-groups toggle (global) ---- */
+const SG_BOXES = { vocals: "sgVocals", drums: "sgDrums", music: "sgMusic" };
+
+function hydrateSubgroups() {
+  const enabled = State.settings.subgroups || ["vocals", "drums", "music"];
+  State.settings.subgroups = enabled;
+  for (const [cat, id] of Object.entries(SG_BOXES)) {
+    const box = $(id);
+    if (!box) continue;
+    box.checked = enabled.includes(cat);
+    box.onchange = persistSubgroups;
+  }
+}
+
+async function persistSubgroups() {
+  const enabled = Object.entries(SG_BOXES)
+    .filter(([, id]) => $(id) && $(id).checked)
+    .map(([cat]) => cat);
+  State.settings.subgroups = enabled;
+  const a = api();
+  if (a) await a.set_setting("subgroups", enabled);
+}
+
 function wireGlobalButtons() {
   $("addProjectBtn").onclick = addProject;
   $("coloursBtn").onclick = openColours;
@@ -83,12 +108,27 @@ async function checkForUpdate() {
   if (!a) { alert("Updates run in the app window."); return; }
   const btn = $("updateBtn");
   const old = btn.textContent;
-  btn.textContent = "⟳ Updating…"; btn.disabled = true;
+  btn.textContent = "⟳ Checking…"; btn.disabled = true;
   try {
     const r = await a.update_app();
-    if (!r.ok) alert("Update: " + (r.error || "failed"));
-    else if (r.changed) alert("Updated to v" + r.version + ".\nClose and relaunch to apply.");
-    else alert("You're already on the latest version (v" + (r.version || State.version) + ").");
+    if (!r.ok) {
+      alert("Update: " + (r.error || "failed"));
+    } else if (r.needsApply) {
+      // Packaged app: a newer EXE is available — confirm, then self-swap.
+      const msg = "Version " + r.latest + " is available (you have v" + r.version + ")."
+        + (r.notes ? "\n\n" + r.notes : "") + "\n\nDownload and install now? The app will relaunch.";
+      if (confirm(msg)) {
+        btn.textContent = "⟳ Installing…";
+        const ar = await a.apply_update(r.download_url);
+        if (!ar.ok) alert("Install failed: " + (ar.error || "unknown"));
+        else alert("Downloading and installing v" + r.latest + ".\nThe app will close and reopen.");
+      }
+    } else if (r.changed) {
+      // Dev/source checkout: git pull happened.
+      alert("Updated to v" + r.version + ".\nClose and relaunch to apply.");
+    } else {
+      alert("You're already on the latest version (v" + (r.version || State.version) + ").");
+    }
   } finally {
     btn.textContent = old; btn.disabled = false;
   }

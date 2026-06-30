@@ -1,0 +1,5 @@
+{
+  "_comment": "Public releases feed for the Studio App self-updater. Set feed_url to the raw URL of your published latest.json (e.g. a public GitHub repo's raw file, or a GitHub Release asset). release_base is the public folder the EXE is hosted in; publish_release.py uses it to fill latest.json's download_url. The source repo stays private; this feed + the EXE are public so no token is baked into the build. Until feed_url is set, the in-app Update button reports 'no feed configured' (packaged) or falls back to git pull (running from source). This file can also be dropped NEXT TO the distributed EXE to set the URL without a rebuild.",
+  "feed_url": "",
+  "release_base": ""
+}

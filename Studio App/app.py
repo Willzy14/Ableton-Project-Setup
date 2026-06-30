@@ -12,7 +12,9 @@ import webview
 from engine_api import Api
 
 APP_DIR = Path(__file__).resolve().parent
-INDEX = APP_DIR / "Web" / "index.html"
+# When frozen by PyInstaller, bundled data (Web/) is extracted under _MEIPASS.
+_BASE = Path(getattr(sys, "_MEIPASS", APP_DIR)) if getattr(sys, "frozen", False) else APP_DIR
+INDEX = _BASE / "Web" / "index.html"
 
 
 def main():

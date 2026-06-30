@@ -24,7 +24,15 @@
           <select id="profileSelect" class="select"></select>
         </label>
         <button id="coloursBtn" class="btn ghost">🎨 Colours</button>
-        <button id="updateBtn" class="btn ghost" title="Pull the latest version">⟳ Update</button>
+        <label class="field subgroups" title="Cluster tracks into nested sub-groups (singer under Vox, Kit/Perc, instrument families)">
+          <span class="field-label">Sub-groups</span>
+          <div class="sg-toggles">
+            <label><input type="checkbox" id="sgVocals" /> Vox</label>
+            <label><input type="checkbox" id="sgDrums" /> Drums</label>
+            <label><input type="checkbox" id="sgMusic" /> Music</label>
+          </div>
+        </label>
+        <button id="updateBtn" class="btn ghost" title="Check for and install the latest version">⟳ Update</button>
         <label class="field grow">
           <span class="field-label">Output folder</span>
           <div class="folder-row">

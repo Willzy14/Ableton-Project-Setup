@@ -172,6 +172,34 @@
         "Studio App real OS drag-drop paths; logo/branding pass",
         "ML subprocess cleanup/timeouts (Codex handoff list)"
       ]
+    },
+    {
+      "date": "2026-06-30",
+      "summary": "Worked the tomorrow list in order. (2) Nested sub-groups SHIPPED: als_patcher.insert_group_track(parent_group_id=) renders a GroupTrack inside a GroupTrack + new _apply_track_groups lays out two levels (exploiting that GroupTrack headers are invisible to find_track_ranges so audio-track indices stay stem-aligned); new Source/subgroup_cluster.py does singer-first vocal clustering (Vox->Singer with Lead/Lead-FX/BGV/BGV-FX order; one/no singer->Lead vs BGV role; title token shared by all stems is not a singer), plus Kit/Percussion for drums and instrument-family for music, all conservative (2+ per sub-group, 3+ per category); project_builder._apply_subgroups + subgroup_categories param. (3-into-UI) Studio App: a Vox/Drums/Music sub-groups toggle (global setting, threaded to build_project), and EXE packaging + a configurable self-updater (build_exe.py PyInstaller ML-off bundling the template; updater.py latest.json check + EXE swap-and-relaunch; publish_release.py; update_feed.json placeholder URL; engine/app frozen-aware; ML forced off when frozen). Validated: test_subgroups 11/11 (incl. e2e nested ALS, validate PASS), test_updater 8/8, full suite green, no regressions. Sam still to: run the app + build_exe, set up the public feed URL, EXE/native-window smoke test.",
+      "files_changed": [
+        "Source/als_patcher.py",
+        "Source/subgroup_cluster.py (new)",
+        "Source/project_builder.py",
+        "Studio App/engine_api.py",
+        "Studio App/app.py",
+        "Studio App/updater.py (new)",
+        "Studio App/build_exe.py (new)",
+        "Studio App/publish_release.py (new)",
+        "Studio App/update_feed.json (new)",
+        "Studio App/Web/index.html, app.js, styles.css",
+        "Tests/test_subgroups.py (new)",
+        "Tests/test_updater.py (new)",
+        "Documentation/AI_CONTEXT.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Sam: run the Studio App (pip install pywebview; Run Studio App.bat) — native window look/feel + sub-groups toggle",
+        "Sam: run build_exe.py, stand up the public releases feed, set feed_url/release_base in update_feed.json, EXE smoke test",
+        "Apply nested sub-groups to the multi-version build path (currently single-version only)",
+        "ML subprocess cleanup/timeouts (Codex handoff list)",
+        "Studio App real OS drag-drop paths; logo/branding pass"
+      ]
     }
   ],
   "decisions": [
