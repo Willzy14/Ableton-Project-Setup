@@ -36,6 +36,10 @@
       "purpose": "Flat-reference WAV summing with numpy fast path and stdlib fallback.",
       "notes": "Used to print one red FLAT REF track rather than duplicating stems into a reference group."
     },
+    "Source/subgroup_cluster.py": {
+      "purpose": "Clusters a working category's stems into nested sub-groups by filename tokens (singer-first for vocals; Kit/Percussion for drums; instrument family for music).",
+      "notes": "Returns the category's stems reordered + tagged with subgroup_key/name/color, or None when no useful sub-grouping applies. A sub-group needs 2+ members; conservative on drums/music. Consumed by project_builder._apply_subgroups; rendered as nested GroupTracks by als_patcher._apply_track_groups."
+    },
     "Source/versions.py": {
       "purpose": "Detects alternate-version subfolders by mirrored element keys.",
       "notes": "Same-folder name-token versions are not implemented yet."

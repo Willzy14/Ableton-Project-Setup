@@ -642,7 +642,7 @@ _GROUP_TRACK_TEMPLATE = '''\t\t\t<GroupTrack Id="{GID}" SelectedToolPanel="7" Se
 \t\t\t\t<AutomationEnvelopes>
 \t\t\t\t\t<Envelopes />
 \t\t\t\t</AutomationEnvelopes>
-\t\t\t\t<TrackGroupId Value="-1" />
+\t\t\t\t<TrackGroupId Value="{TGID}" />
 \t\t\t\t<TrackUnfolded Value="{UNFOLDED}" />
 \t\t\t\t<DevicesListWrapper LomId="0" />
 \t\t\t\t<ClipSlotsListWrapper LomId="0" />
@@ -721,9 +721,9 @@ _GROUP_TRACK_TEMPLATE = '''\t\t\t<GroupTrack Id="{GID}" SelectedToolPanel="7" Se
 \t\t\t\t\t\t<MpePitchBendUsesTuning Value="true" />
 \t\t\t\t\t</MidiInputRouting>
 \t\t\t\t\t<AudioOutputRouting>
-\t\t\t\t\t\t<Target Value="AudioOut/Main" />
-\t\t\t\t\t\t<UpperDisplayString Value="Main" />
-\t\t\t\t\t\t<LowerDisplayString Value="" />
+\t\t\t\t\t\t<Target Value="{OUT_TARGET}" />
+\t\t\t\t\t\t<UpperDisplayString Value="{OUT_UPPER}" />
+\t\t\t\t\t\t<LowerDisplayString Value="{OUT_LOWER}" />
 \t\t\t\t\t\t<MpeSettings>
 \t\t\t\t\t\t\t<ZoneType Value="0" />
 \t\t\t\t\t\t\t<FirstNoteChannel Value="1" />
@@ -947,17 +947,27 @@ _GROUP_TRACK_TEMPLATE = '''\t\t\t<GroupTrack Id="{GID}" SelectedToolPanel="7" Se
 
 
 def insert_group_track(lines, insert_before_line, group_name, group_id,
-                       color=14, num_scenes=8, muted=True, unfolded=False):
+                       color=14, num_scenes=8, muted=True, unfolded=False,
+                       parent_group_id=-1):
     """Insert a properly-structured GroupTrack matching Ableton 12.4 format.
 
-    Routed to Main. `muted` sets the Speaker (False = audible, for working
-    submix groups; True = muted). `unfolded` sets expanded (True) vs collapsed.
-    Returns the number of lines inserted.
+    `muted` sets the Speaker (False = audible, for working submix groups; True =
+    muted). `unfolded` sets expanded (True) vs collapsed.
+
+    `parent_group_id` nests this group inside another GroupTrack: -1 = top-level
+    (TrackGroupId -1, output routed to Main); any other id makes this a SUB-group
+    whose TrackGroupId points at the parent and whose audio is routed up into it
+    (AudioOut/GroupTrack). Returns the number of lines inserted.
     """
+    nested = parent_group_id is not None and int(parent_group_id) != -1
     block = _GROUP_TRACK_TEMPLATE.format(
         GID=group_id,
         NAME=_xml_escape(group_name),
         COLOR=color,
+        TGID=parent_group_id if parent_group_id is not None else -1,
+        OUT_TARGET="AudioOut/GroupTrack" if nested else "AudioOut/Main",
+        OUT_UPPER="Group" if nested else "Main",
+        OUT_LOWER="",
         SPK_ON="false" if muted else "true",
         UNFOLDED="true" if unfolded else "false",
         ID_MIX_ON=_alloc_id(),
@@ -1123,6 +1133,93 @@ def insert_locators(lines, locators):
             return
 
 
+def _apply_track_groups(lines, stems):
+    """Wrap tagged working stems in (optionally nested) GroupTracks.
+
+    A stem's `group_key` marks its top-level category submix (Drums/Vox/...);
+    an optional `subgroup_key` nests it one level deeper inside a named
+    sub-group (e.g. a singer under Vox, Kit/Percussion under Drums). Stems
+    sharing a key must be contiguous (project_builder lays them out that way).
+    The group_*/subgroup_* fields carry each header's name/color/muted/unfolded.
+
+    GroupTrack headers are invisible to find_track_ranges, so audio-track
+    indices stay aligned to `stems` (track i+1 == stems[i]) throughout —
+    Session Time is audio track 0. We set each child's TrackGroupId in place
+    first, then insert the headers; inserting top-to-bottom and re-finding the
+    audio tracks before every insert keeps a parent header above its sub-group.
+    """
+    # 1. Parent runs: consecutive stems sharing a group_key.
+    parent_runs = []
+    i = 0
+    while i < len(stems):
+        if stems[i].get("group_key"):
+            j = i
+            gk = stems[i]["group_key"]
+            while j < len(stems) and stems[j].get("group_key") == gk:
+                j += 1
+            parent_runs.append((i, j))
+            i = j
+        else:
+            i += 1
+    if not parent_runs:
+        return
+
+    # 2. Allocate group ids, map each child stem to its DIRECT parent group,
+    #    and collect the headers to insert.
+    direct_parent = {}   # stem index -> id of its immediate containing group
+    headers = []         # (first_stem_index, depth, gid, parent_gid, name, color, muted, unfolded)
+    for (a, b) in parent_runs:
+        pid = _alloc_id()
+        s0 = stems[a]
+        headers.append((a, 0, pid, -1,
+                        s0.get("group_name", "Group"),
+                        s0.get("group_color", s0["color"]),
+                        s0.get("group_muted", False),
+                        s0.get("group_unfolded", True)))
+        k = a
+        while k < b:
+            sk = stems[k].get("subgroup_key")
+            if sk:
+                m = k
+                while m < b and stems[m].get("subgroup_key") == sk:
+                    m += 1
+                sid = _alloc_id()
+                sub0 = stems[k]
+                headers.append((k, 1, sid, pid,
+                                sub0.get("subgroup_name", "Group"),
+                                sub0.get("subgroup_color",
+                                         sub0.get("group_color", sub0["color"])),
+                                sub0.get("subgroup_muted", False),
+                                sub0.get("subgroup_unfolded", True)))
+                for s in range(k, m):
+                    direct_parent[s] = sid
+                k = m
+            else:
+                direct_parent[k] = pid
+                k += 1
+
+    # 3. Route each child into its immediate parent (in place — no line shift).
+    audio_g = [t for t in find_track_ranges(lines) if t["type"] == "AudioTrack"]
+    for si, gid in direct_parent.items():
+        tidx = si + 1
+        if tidx < len(audio_g):
+            set_track_group_id(lines, audio_g[tidx], gid)
+            set_track_output_group(lines, audio_g[tidx])
+
+    # 4. Insert headers. (first_index asc, depth asc) + re-find before each
+    #    insert => a parent header lands above its own first sub-group header.
+    for (first_idx, _depth, gid, parent_gid, name, color, muted, unfolded) in sorted(
+            headers, key=lambda h: (h[0], h[1])):
+        audio_g = [t for t in find_track_ranges(lines) if t["type"] == "AudioTrack"]
+        tidx = first_idx + 1
+        if tidx < len(audio_g):
+            insert_group_track(
+                lines, audio_g[tidx]["start"], name, gid,
+                color=color, muted=muted, unfolded=unfolded,
+                parent_group_id=parent_gid,
+            )
+
+
 def patch_project(template_path, output_path, stems, bpm, project_audio_dir,
                   locators=None):
     """Main entry point: patch a template with stems and write the result.
@@ -1236,43 +1333,10 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir,
             set_track_muted(lines, audio_ref[tidx])
 
     # Working-track groups: wrap each groupable category with 2+ stems in a
-    # GroupTrack (audible, routed to Main, expanded). Children route into it.
-    # group_key/group_name are tagged on the working stems by project_builder.
-    runs = []
-    i = 0
-    while i < len(stems):
-        gk = stems[i].get("group_key")
-        if gk:
-            j = i
-            while j < len(stems) and stems[j].get("group_key") == gk:
-                j += 1
-            runs.append({
-                "name": stems[i].get("group_name", "Group"),
-                "color": stems[i].get("group_color", stems[i]["color"]),
-                "indices": list(range(i, j)),
-                "muted": stems[i].get("group_muted", False),
-                "unfolded": stems[i].get("group_unfolded", True),
-            })
-            i = j
-        else:
-            i += 1
-
-    # Insert bottom-to-top so earlier (higher) runs keep their line positions.
-    for run in reversed(runs):
-        group_id = _alloc_id()
-        audio_g = [t for t in find_track_ranges(lines) if t["type"] == "AudioTrack"]
-        for si in run["indices"]:
-            tidx = si + 1
-            if tidx < len(audio_g):
-                set_track_group_id(lines, audio_g[tidx], group_id)
-                set_track_output_group(lines, audio_g[tidx])
-        audio_g = [t for t in find_track_ranges(lines) if t["type"] == "AudioTrack"]
-        first_tidx = run["indices"][0] + 1
-        if first_tidx < len(audio_g):
-            insert_group_track(
-                lines, audio_g[first_tidx]["start"], run["name"], group_id,
-                color=run["color"], muted=run["muted"], unfolded=run["unfolded"],
-            )
+    # GroupTrack (audible, routed to Main, expanded), and optionally nest
+    # sub-groups (e.g. a singer under Vox) one level deeper. group_key/
+    # subgroup_key are tagged on the working stems by project_builder.
+    _apply_track_groups(lines, stems)
 
     tracks_to_remove = []
     all_tracks = find_track_ranges(lines)

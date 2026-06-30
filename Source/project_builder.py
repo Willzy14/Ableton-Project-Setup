@@ -28,6 +28,10 @@ from versions import detect_versions, element_key
 
 VERSION_GAP_BARS = 16   # gap between version sections on the timeline
 
+# Categories whose working group is clustered into nested sub-groups (singer
+# under Vox, Kit/Percussion under Drums, instrument families under Music).
+SUBGROUP_CATEGORIES = ("vocals", "drums", "music")
+
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "Config" / "project_builder.json"
 DEFAULT_TEMPLATE_PATH = Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates\Ableton Project Set Up 250 Tracks.als")
 
@@ -300,8 +304,34 @@ def _write_ml_report(report_path, ordered_paths, ml_results):
         fh.write("\n".join(lines))
 
 
+def _apply_subgroups(stems, scope):
+    """Cluster each in-scope category's flat group into nested sub-groups.
+
+    `stems` are already laid out in category order; each contiguous category
+    block is replaced by its sub-clustered (reordered + tagged) version when the
+    clusterer finds a useful structure. Returns the rebuilt stems list.
+    """
+    from subgroup_cluster import cluster_subgroups
+    out = []
+    i = 0
+    while i < len(stems):
+        cat = stems[i]["category"]
+        j = i
+        while j < len(stems) and stems[j]["category"] == cat:
+            j += 1
+        block = stems[i:j]
+        if cat in scope and block[0].get("group_key"):
+            clustered = cluster_subgroups(block, cat)
+            if clustered:
+                block = clustered
+        out.extend(block)
+        i = j
+    return out
+
+
 def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
-                  use_ml=None, project_name=None, category_colors=None):
+                  use_ml=None, project_name=None, category_colors=None,
+                  subgroup_categories=None):
     """Build a complete Ableton project from a folder of stems.
 
     Args:
@@ -315,6 +345,9 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         category_colors: optional {category: palette_index} overriding the
             default working-track colours (kick/drums/bass/music/vocals/fx/
             sends) — used by the studio UI's per-user/partner colour profiles.
+        subgroup_categories: which categories get clustered into nested
+            sub-groups. None = default (vocals/drums/music); pass an empty
+            list/tuple to disable nesting entirely.
 
     Returns:
         Path to the created project folder
@@ -528,6 +561,15 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         if CATEGORIES[cat]["group"] and cat_counts[cat] >= 2:
             s["group_key"] = cat
             s["group_name"] = group_names.get(cat, cat.title())
+
+    # Nested sub-groups: cluster vocals (singer/role), drums (kit/perc) and
+    # music (by instrument) into named sub-groups within their category group.
+    scope = SUBGROUP_CATEGORIES if subgroup_categories is None else tuple(subgroup_categories)
+    if scope:
+        stems = _apply_subgroups(stems, scope)
+        subbed = sorted({s["subgroup_name"] for s in stems if s.get("subgroup_name")})
+        if subbed:
+            print("\nSub-groups: " + ", ".join(subbed))
 
     # --- Reference tracks at the bottom -------------------------------------
     # Always print our own flat bounce of the mix stems (a supplied "ref"/
