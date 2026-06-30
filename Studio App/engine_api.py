@@ -359,10 +359,11 @@ class Api:
         # Global sub-group preference (Vocals/Drums/Music checkboxes). A list
         # (possibly empty to disable); None falls back to the engine default.
         subgroups = settings.get("subgroups")
-        # The packaged EXE ships ML-off — and must NOT try to spawn itself as an
-        # ML subprocess (sys.executable is the GUI). Force ML off when frozen.
-        import updater
-        use_ml = False if updater.is_frozen() else None
+        # The Studio App runs ML OFF (the decided model): named packs classify by
+        # filename, and ML in the GUI is heavy (Demucs spins the fans) and — when
+        # frozen — would spawn the GUI EXE as its own subprocess. ML-only naming
+        # of fully-generic stems stays a CLI job.
+        use_ml = False
 
         for i, proj in enumerate(projects):
             st = self._status[i]

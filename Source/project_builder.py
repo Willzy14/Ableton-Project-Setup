@@ -114,6 +114,62 @@ def get_enable_ml_classifier():
     return bool(_load_project_config().get("enable_ml_classifier", True))
 
 
+def _ensure_wav_paths(paths, staging_dir):
+    """Convert any non-WAV audio (AIFF/MP3/FLAC/OGG...) to 32-bit float WAV.
+
+    The whole engine reads WAV only (clip lengths come from the WAV header, the
+    bounce/analysis read PCM frames), so a stray non-WAV stem — often an MP3/FLAC
+    reference dropped in with the stems — otherwise crashes the build. Converts
+    via soundfile into staging_dir and substitutes the path; WAVs pass through
+    untouched (zero cost for normal packs). A file that can't be read is dropped
+    with a warning rather than killing the build. Returns (new_paths, skipped).
+    """
+    new, skipped = [], []
+    sf = None
+    for p in paths:
+        p = Path(p)
+        if p.suffix.lower() == ".wav":
+            new.append(p)
+            continue
+        if sf is None:
+            try:
+                import soundfile as _sf
+                sf = _sf
+            except Exception:  # noqa: BLE001 — no soundfile -> can't convert
+                sf = False
+        if not sf:
+            skipped.append((p, "soundfile not installed (can't read non-WAV)"))
+            continue
+        try:
+            data, sr = sf.read(str(p))
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            out = staging_dir / (p.stem + ".wav")
+            sf.write(str(out), data, sr, subtype="FLOAT")  # 32-bit float — engine reads this
+            new.append(out)
+        except Exception as exc:  # noqa: BLE001 — unreadable -> skip, don't crash
+            skipped.append((p, str(exc)))
+    return new, skipped
+
+
+def _normalize_audio_to_wav(classified, references, unclassified, staging_dir):
+    """Run _ensure_wav_paths across every classified/reference/unknown list."""
+    skipped = []
+    for cat in list(classified.keys()):
+        classified[cat], sk = _ensure_wav_paths(classified[cat], staging_dir)
+        skipped += sk
+        if not classified[cat]:
+            del classified[cat]
+    references, sk = _ensure_wav_paths(references, staging_dir)
+    skipped += sk
+    unclassified, sk = _ensure_wav_paths(unclassified, staging_dir)
+    skipped += sk
+    if skipped:
+        print("\nWARNING — couldn't read these files, left OUT of the build:")
+        for pth, why in skipped:
+            print("  " + Path(pth).name + " — " + why)
+    return classified, references, unclassified
+
+
 def detect_project_bpm(classified):
     """Auto-detect BPM from the cleanest grid-locking rhythmic stem.
 
@@ -392,6 +448,13 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     print("Classifying stems...")
     classified, references, unclassified = classify_stems(stem_folder)
+
+    # Normalise non-WAV audio (AIFF/MP3/FLAC dropped in with the stems) to WAV
+    # up front, so every downstream reader (regions, BPM, bounce, analysis) only
+    # ever sees WAV. Unreadable files are dropped with a warning, never crash.
+    wav_staging = Path(tempfile.mkdtemp(prefix="als_wav_"))
+    classified, references, unclassified = _normalize_audio_to_wav(
+        classified, references, unclassified, wav_staging)
 
     # Audio-content safety net (numpy): a file filenames couldn't place
     # (music/unclassified) but that ANALYSES as a full mix / master / sub-bounce
@@ -672,6 +735,10 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
             classified.setdefault(cat, []).append(f)
         else:
             unclassified.append(f)
+
+    # Normalise non-WAV audio to WAV before any analysis (same as single build).
+    classified, references, unclassified = _normalize_audio_to_wav(
+        classified, references, unclassified, version_audio_dir / "_wav_staging")
 
     music = classified.get("music", [])
     fulls = []
