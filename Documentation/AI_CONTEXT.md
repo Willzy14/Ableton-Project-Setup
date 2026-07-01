@@ -125,6 +125,7 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 6. ~~**Logo / branding pass**~~ **DONE (2026-07-01)** — Wired Masters logo + wordmark + subtle studio background in the Studio App. Needs Sam to eyeball on a real run.
 
 ### Longer-running / lower priority
+0. **Multi-DAW export (Logic / Pro Tools)** — future direction, no work planned. The engine is DAW-agnostic; each DAW is a swappable exporter. Ableton (`.als`, gzipped XML) is the flagship; Logic/PT are closed binary formats so the realistic path is an **AAF** backend (~60–80% fidelity, one backend serves both), with a Pro Tools scripting-SDK (PTSL) exporter as a premium option (PT's numbered Memory Locations fit the jump-to-ref feature natively). Full write-up: [MULTI_DAW_ROADMAP.md](Documentation/MULTI_DAW_ROADMAP.md).
 0. **Sam checks the fresh rebuilt Moby project in Ableton** at `C:\Users\Carillon\Desktop\Mobi Project\Mobi.als`; both manual tempo and tempo automation are verified at 160 BPM from project creation, not patched after the fact.
 0. **Continue Codex handoff list:** `Documentation/CODEBASE_REVIEW_NEXT_STEPS.md` now marks Sections 1-5 completed; continue with ML subprocess cleanup/timeouts next.
 0. **Review/commit ML classifier work** from 2026-06-26 (`Source/audio_ml_classify.py`, `project_builder.py`, `stem_classifier.py`) after Sam checks the Moby project in Ableton.
