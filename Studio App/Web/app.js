@@ -61,7 +61,8 @@ function hydrateTopbar() {
   sel.onchange = async () => {
     State.settings.active_profile = sel.value;
     const a = api(); if (a) await a.set_setting("active_profile", sel.value);
-    renderQueue(); // refresh per-card default profile
+    renderQueue();   // refresh per-card default profile
+    renderPreview(); // recolour the preview to the newly-active profile
   };
   const f = $("outputFolder");
   f.textContent = State.settings.output_folder || "—";
@@ -92,22 +93,41 @@ async function persistSubgroups() {
   if (a) await a.set_setting("subgroups", enabled);
 }
 
-/* ---- session preview (decorative colour-language legend) ----
-   A tasteful static showcase of the session the app builds: colour-coded lanes
-   with tiny faux-waveforms, groups + nested sub-groups. Reacts to the Vox/Drums/
-   Music sub-group toggles so the tree visibly changes. No backend — pure legend. */
+/* ---- session preview (colour-language legend) ----
+   Shows the session the app builds — colour-coded lanes with tiny faux-waveforms,
+   groups + nested sub-groups. The colours mirror the ACTIVE colour profile (the
+   real Ableton palette indices Sam picked), and the tree reacts to the Vox/Drums/
+   Music sub-group toggles. `cc` = colour category; `sg` = sub-group toggle key. */
 const PREVIEW_LANES = [
-  { name: "Kick",     color: "var(--cat-drums)",  seed: 7  },
-  { name: "Drums",    color: "var(--cat-drums)",  seed: 3,  grp: "GRP", cat: "drums",
+  { name: "Kick",     cc: "drums",  seed: 7  },
+  { name: "Drums",    cc: "drums",  seed: 3,  grp: "GRP", sg: "drums",
     subs: [ { name: "Kit",  seed: 11 }, { name: "Perc", seed: 5 } ] },
-  { name: "Bass",     color: "var(--cat-bass)",   seed: 9  },
-  { name: "Music",    color: "var(--cat-music)",  seed: 4,  grp: "GRP", cat: "music",
+  { name: "Bass",     cc: "bass",   seed: 9  },
+  { name: "Music",    cc: "music",  seed: 4,  grp: "GRP", sg: "music",
     subs: [ { name: "Synth", seed: 6 }, { name: "Keys", seed: 13 } ] },
-  { name: "Vox",      color: "var(--cat-vocals)", seed: 8,  grp: "GRP", cat: "vocals",
+  { name: "Vox",      cc: "vocals", seed: 8,  grp: "GRP", sg: "vocals",
     subs: [ { name: "Lauren", seed: 2 }, { name: "Sarah", seed: 15 } ] },
-  { name: "FX",       color: "var(--cat-fx)",     seed: 12 },
-  { name: "Flat Ref", color: "var(--cat-ref)",    seed: 10 },
+  { name: "FX",       cc: "fx",     seed: 12 },
+  { name: "Flat Ref", cc: "ref",    seed: 10 },
 ];
+
+const REF_PALETTE_INDEX = 14; // references are always red (Ableton index 14)
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/* Resolve a category's colour from the ACTIVE profile's palette index, so the
+   preview shows the colours Sam actually chose. Falls back to the CSS category
+   colour when a profile hasn't set that category. */
+function activeProfileColor(cc) {
+  if (cc === "ref") return State.palette[REF_PALETTE_INDEX] || cssVar("--cat-ref");
+  const prof = State.profiles.find((p) => p.name === State.settings.active_profile)
+    || State.profiles[0];
+  const idx = prof && prof.colors ? prof.colors[cc] : undefined;
+  if (idx != null && State.palette[idx]) return State.palette[idx];
+  return cssVar("--cat-" + cc) || "#8a94a0";
+}
 
 /* Deterministic faux-waveform bars (stable per lane, no RNG churn on re-render). */
 function waveBars(seed, count) {
@@ -139,17 +159,18 @@ function renderPreview() {
   host.innerHTML = "";
   const enabled = State.settings.subgroups || [];
   PREVIEW_LANES.forEach((lane) => {
-    host.appendChild(laneEl(lane));
-    if (lane.subs && lane.cat && enabled.includes(lane.cat)) {
+    const color = activeProfileColor(lane.cc);
+    host.appendChild(laneEl({ name: lane.name, color, seed: lane.seed, grp: lane.grp }));
+    if (lane.subs && lane.sg && enabled.includes(lane.sg)) {
       lane.subs.forEach((s) =>
-        host.appendChild(laneEl({ name: s.name, color: lane.color, seed: s.seed, arrow: true })));
+        host.appendChild(laneEl({ name: s.name, color, seed: s.seed, arrow: true })));
     }
   });
 }
 
 function wireGlobalButtons() {
   $("addProjectBtn").onclick = addProject;
-  $("coloursBtn").onclick = openColours;
+  $("previewColoursBtn").onclick = openColours;
   $("updateBtn").onclick = checkForUpdate;
   $("closeColours").onclick = () => $("coloursModal").classList.add("hidden");
   $("changeFolderBtn").onclick = changeFolder;
@@ -447,6 +468,7 @@ async function saveProfile() {
   $("coloursModal").classList.add("hidden");
   hydrateTopbar();
   renderQueue();
+  renderPreview();
 }
 
 function newProfile() {
@@ -469,6 +491,7 @@ async function deleteProfile() {
   $("coloursModal").classList.add("hidden");
   hydrateTopbar();
   renderQueue();
+  renderPreview();
 }
 
 /* ---- batch build ---- */

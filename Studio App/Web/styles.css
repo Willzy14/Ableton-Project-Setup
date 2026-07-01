@@ -33,7 +33,7 @@
 :root {
   --bg:        #0a0b0f;
   --bg-2:      #0c0e13;
-  --panel:     rgba(255,255,255,0.035);
+  --panel:     rgba(12,14,19,0.60);
   --panel-2:   rgba(255,255,255,0.06);
   --stroke:    rgba(255,255,255,0.09);
   --stroke-2:  rgba(255,255,255,0.16);
@@ -89,17 +89,17 @@ html, body {
   content: "";
   position: fixed; inset: 0; z-index: -2;
   background: url("assets/studio_bg.jpg") center 32% / cover no-repeat;
-  opacity: 0.22;
-  filter: grayscale(0.35) brightness(0.7) contrast(1.05);
+  opacity: 0.8;
+  filter: grayscale(0.15) brightness(0.92) contrast(1.05);
   pointer-events: none;
 }
 .app::after {
   content: "";
   position: fixed; inset: 0; z-index: -1; pointer-events: none;
   background:
-    radial-gradient(120% 140% at 12% -10%, rgba(46,230,214,0.10), transparent 42%),
-    radial-gradient(90% 120% at 100% 0%, rgba(90,120,255,0.08), transparent 45%),
-    linear-gradient(180deg, rgba(10,11,15,0.72) 0%, rgba(10,11,15,0.82) 45%, rgba(10,11,15,0.92) 100%);
+    radial-gradient(120% 140% at 12% -10%, rgba(46,230,214,0.09), transparent 42%),
+    radial-gradient(90% 120% at 100% 0%, rgba(90,120,255,0.07), transparent 45%),
+    linear-gradient(180deg, rgba(9,10,14,0.30) 0%, rgba(9,10,14,0.42) 55%, rgba(9,10,14,0.56) 100%);
 }
 
 .mono { font-family: var(--font-mono) !important; }
@@ -264,7 +264,7 @@ html, body {
 /* ░░ Session preview panel ░░ */
 .preview {
   border-radius: 14px;
-  background: rgba(255,255,255,0.035);
+  background: var(--panel);
   border: 1px solid var(--stroke);
   backdrop-filter: blur(6px);
   padding: 16px 16px 14px;
@@ -277,9 +277,17 @@ html, body {
   font-size: 10.5px; letter-spacing: 1.6px; color: var(--text-faint); text-transform: uppercase;
 }
 .preview-pill {
-  padding: 4px 10px; border-radius: 999px; font-size: 11px;
+  padding: 4px 11px 4px 9px; border-radius: 999px; font-size: 11px; font-family: inherit;
   border: 1px solid rgba(46,230,214,0.35); background: rgba(46,230,214,0.10); color: #8ff0e6;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  transition: background .15s, border-color .15s, color .15s, transform .08s;
 }
+.preview-pill::before {
+  content: ""; width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto;
+  background: conic-gradient(var(--cat-drums), var(--cat-bass), var(--cat-music), var(--cat-vocals), var(--cat-fx), var(--cat-drums));
+}
+.preview-pill:hover { background: rgba(46,230,214,0.2); border-color: var(--accent); color: #b6f7ee; }
+.preview-pill:active { transform: translateY(1px); }
 .preview-lanes { display: flex; flex-direction: column; gap: 6px; }
 
 .lane {
