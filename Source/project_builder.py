@@ -381,6 +381,60 @@ def _ml_classify_unknowns(paths, use_whisper=True, python_exe=None, timeout=None
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _build_groups_report(stems):
+    """[{name, subgroups:[...]}] for the working GroupTracks, in layout order."""
+    groups = {}
+    for s in stems:
+        g = s.get("group_name")
+        if not g or g == "Dry":
+            continue
+        groups.setdefault(g, [])
+        sg = s.get("subgroup_name")
+        if sg and sg not in groups[g]:
+            groups[g].append(sg)
+    return [{"name": g, "subgroups": subs} for g, subs in groups.items()]
+
+
+def _write_session_report(project_folder, report):
+    """Write the machine-readable Session Report.json (the Studio App reads it to
+    show a build Result Card) plus a short human-readable Session Report.txt."""
+    try:
+        with open(project_folder / "Session Report.json", "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2)
+    except Exception:  # noqa: BLE001 — reporting must never fail a good build
+        pass
+    try:
+        lines = [
+            report.get("project_name", ""),
+            "=" * 56,
+            "BPM: " + str(report.get("bpm", "?"))
+            + (" (from " + report["bpm_source"] + ", " + str(report.get("bpm_inliers", "?"))
+               + "/" + str(report.get("bpm_onsets", "?")) + " on grid, +/-"
+               + str(report.get("bpm_residual_ms", "?")) + "ms)"
+               if report.get("bpm_source") else " (set manually)"),
+            "Tracks: " + str(report.get("tracks_total", "?")) + " + Session Time",
+            "",
+            "Categories: " + ", ".join(k.upper() + " " + str(v)
+                                       for k, v in report.get("categories", {}).items()),
+        ]
+        for g in report.get("groups", []):
+            subs = (" > " + ", ".join(g["subgroups"])) if g.get("subgroups") else ""
+            lines.append("  Group " + g["name"] + subs)
+        if report.get("buses"):
+            lines.append("Buses parked (out of the sum): " + ", ".join(report["buses"]))
+        if report.get("dry_parked"):
+            lines.append("Dry parked: " + ", ".join(report["dry_parked"]))
+        if report.get("silent"):
+            lines.append("Silent/dead exports: " + ", ".join(report["silent"]))
+        if report.get("skipped"):
+            lines.append("Skipped (unreadable / SR mismatch): " + ", ".join(report["skipped"]))
+        lines.append("Flat-ref peak: " + str(report.get("flat_ref_peak", "?")))
+        with open(project_folder / "Session Report.txt", "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _write_ml_report(report_path, ordered_paths, ml_results):
     """Write a human-readable report of every audio-classified (unnamed) stem."""
     lines = [
@@ -570,6 +624,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                   + " stems -> see 'ML Classification Report.txt'")
         unclassified = []
 
+    bpm_meta = None
     if bpm is None or str(bpm).lower() == "auto":
         print("\nDetecting BPM from percussion...")
         result, src = detect_project_bpm(classified)
@@ -580,6 +635,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             )
         bpm = result["bpm_rounded"]
         res_ms = result["residual_ms"]
+        bpm_meta = {"source": src.name, "residual_ms": res_ms,
+                    "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
         warn = "" if (res_ms is not None and res_ms <= 5.0) else "  <-- LOW CONFIDENCE, verify"
         print("  " + str(bpm) + " BPM from " + src.name
               + " (raw " + ("%.2f" % result["bpm"]) + ", "
@@ -802,6 +859,29 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     print("  ALS:    " + str(als_path))
     print("  BPM:    " + str(bpm))
     print("  Tracks: " + str(len(all_stems)) + " + Session Time")
+
+    report = {
+        "project_name": project_name, "artist": artist, "title": title, "label": label,
+        "als_name": als_path.name,
+        "bpm": float(bpm),
+        "bpm_source": bpm_meta["source"] if bpm_meta else None,
+        "bpm_residual_ms": bpm_meta["residual_ms"] if bpm_meta else None,
+        "bpm_inliers": bpm_meta["inliers"] if bpm_meta else None,
+        "bpm_onsets": bpm_meta["onsets"] if bpm_meta else None,
+        "tracks_total": len(all_stems),
+        "categories": {cat: cat_counts[cat]
+                       for cat in sorted(cat_counts, key=lambda c: CATEGORIES[c]["order"])},
+        "groups": _build_groups_report(stems),
+        "buses": [s["name"] for s in bus_tracks],
+        "dry_parked": [s.get("display_name", s.get("name", "")) for s in dry_tracks],
+        "silent": [s.get("display_name", s.get("name", "")) for s in silent_tracks],
+        "references_supplied": len(references),
+        "references_preseeded": len(preseeded_refs),
+        "flat_ref_peak": round(float(summary["peak"]), 3),
+        "skipped": list(summary.get("skipped", [])),
+        "multiversion": False,
+    }
+    _write_session_report(project_folder, report)
 
     return project_folder
 
@@ -1101,6 +1181,26 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     print("\nMulti-version project created: " + str(project_folder))
     print("  BPM " + str(int(bpm)) + " | versions at bars: "
           + ", ".join(pv[i]["name"] + "=" + bars[i] for i in range(len(pv))))
+
+    primary_tracks = [t for t in all_stems if t.get("category") not in ("reference", "bus")]
+    report = {
+        "project_name": project_name, "artist": artist, "title": title, "label": label,
+        "als_name": als_path.name,
+        "bpm": float(bpm), "bpm_source": None,
+        "tracks_total": len(all_stems),
+        "categories": {cat: cat_counts[cat]
+                       for cat in sorted(cat_counts, key=lambda c: CATEGORIES[c]["order"])},
+        "groups": _build_groups_report(primary_tracks),
+        "buses": sorted({s["name"] for p in pv for s in p["buses"]}),
+        "dry_parked": [], "silent": [],
+        "references_supplied": sum(len(p["refs"]) for p in pv),
+        "references_preseeded": len(preseeded_refs),
+        "flat_ref_peak": None,
+        "skipped": [],
+        "multiversion": True,
+        "versions": [p["name"] for p in pv],
+    }
+    _write_session_report(project_folder, report)
     return project_folder
 
 

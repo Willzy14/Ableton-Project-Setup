@@ -133,6 +133,45 @@ def parse_project_name(text):
     return artist.strip(), title.strip(), label
 
 
+def _os_open(path):
+    """Open a file/folder with the OS default app — a .als launches Ableton."""
+    path = str(path)
+    if sys.platform == "win32":
+        os.startfile(path)  # noqa: — Windows shell-opens with the default handler
+    elif sys.platform == "darwin":
+        import subprocess
+        subprocess.run(["open", path], check=False)
+    else:
+        import subprocess
+        subprocess.run(["xdg-open", path], check=False)
+
+
+# Noise tokens stripped when guessing a title from a dropped folder/zip name.
+_TITLE_NOISE = re.compile(
+    r"\b(stems?|session|multitracks?|project|audio|files?|bounces?|masters?|wav|"
+    r"24\s?44\.?1?|16\s?44\.?1?|44\.?1|48k?)\b", re.IGNORECASE)
+
+
+def _title_from_paths(paths):
+    """Best-guess 'Artist - Title [Label]' from the dropped folder/zip name.
+
+    Pro packs are usually already named that way, so keep it verbatim and only
+    strip obvious noise (Stems / Multitracks / Project / sample-rate tags)."""
+    if not paths:
+        return ""
+    p0 = Path(paths[0])
+    if p0.is_dir() or not p0.suffix:      # a folder (extension-less) name
+        base = p0.name
+    elif p0.suffix.lower() == ".zip":
+        base = p0.stem
+    else:
+        base = p0.parent.name             # loose file(s) -> their folder
+    n = re.sub(r"[_]+", " ", base)
+    n = _TITLE_NOISE.sub("", n)
+    n = re.sub(r"\s{2,}", " ", n).strip(" -_·")
+    return n
+
+
 def _audio_files_in(folder):
     return [p for p in Path(folder).iterdir()
             if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS]
@@ -336,6 +375,35 @@ class Api:
             result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         return {"ok": bool(result), "paths": list(result) if result else []}
 
+    def suggest_title(self, paths):
+        """Guess a project title from dropped paths, for auto-filling the card."""
+        try:
+            return {"ok": True, "title": _title_from_paths(paths)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc), "title": ""}
+
+    def open_project(self, als_path):
+        """Open a finished .als (launches Ableton with the default handler)."""
+        try:
+            p = Path(als_path)
+            if not p.exists():
+                return {"ok": False, "error": "File not found — was it moved?"}
+            _os_open(p)
+            return {"ok": True}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
+    def reveal_folder(self, folder):
+        """Open a finished project folder in the file explorer."""
+        try:
+            p = Path(folder)
+            if not p.exists():
+                return {"ok": False, "error": "Folder not found — was it moved?"}
+            _os_open(p)
+            return {"ok": True}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
     # ---- batch build ----
     def get_status(self):
         return {"running": self._running, "projects": self._status}
@@ -345,7 +413,8 @@ class Api:
         if self._running:
             return {"ok": False, "error": "A batch is already running."}
         self._status = [{"title": p.get("title") or "(untitled)",
-                         "state": "pending", "message": "", "folder": ""}
+                         "state": "pending", "message": "", "folder": "",
+                         "als": "", "report": None}
                         for p in projects]
         self._running = True
         threading.Thread(target=self._run_batch_worker,
@@ -392,6 +461,8 @@ class Api:
 
                 st["message"] = "Validating…"
                 als = next(Path(folder).glob("*.als"), None)
+                st["als"] = str(als) if als else ""
+                st["report"] = _read_json(Path(folder) / "Session Report.json", None)
                 ok = bool(als) and validate_path(als).ok
                 st["state"] = "done" if ok else "warn"
                 st["message"] = "Done" if ok else "Built — validator flagged it, check by ear"

@@ -307,8 +307,8 @@ html, body {
 .lane.sub .lane-name { font-size: 11.5px; color: var(--text-mute); }
 .lane .lane-name .arrow { color: var(--text-faint); margin-right: 4px; }
 .lane .grp { font-family: var(--font-mono); font-size: 9px; color: var(--text-faint); letter-spacing: .5px; flex: 0 0 auto; }
-.lane .wave { flex: 1; display: flex; align-items: center; gap: 1.5px; height: 20px; overflow: hidden; }
-.lane .wave i { display: block; width: 2px; border-radius: 1px; background: currentColor; opacity: 0.55; }
+.lane .wave { flex: 1; display: flex; align-items: flex-end; gap: 1.5px; height: 20px; overflow: hidden; }
+.lane .wave i { flex: 1; min-width: 1.5px; border-radius: 1px; background: currentColor; opacity: 0.62; box-shadow: 0 0 4px currentColor; }
 
 .preview-legend { font-size: 10.5px; color: var(--text-faint); line-height: 1.5; margin-top: 2px; }
 
@@ -364,6 +364,43 @@ html, body {
 .spinner { width: 15px; height: 15px; border: 2px solid rgba(255,255,255,0.18); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .progress-note { font-family: var(--font-mono); font-size: 12px; color: var(--text-mute); }
+
+/* ░░ Build Result Card (inside a progress item) ░░ */
+.progress-item { flex-direction: column; align-items: stretch; gap: 10px; }
+.pi-head { display: flex; align-items: center; gap: 12px; }
+.rc { display: flex; flex-direction: column; gap: 9px; padding: 11px 12px; border-radius: 10px;
+  background: rgba(0,0,0,0.25); border: 1px solid var(--stroke); }
+.rc-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.rc-pill { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-dim);
+  padding: 3px 8px; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px solid var(--stroke); }
+.rc-pill.amber { color: var(--warn); border-color: rgba(255,184,77,0.35); background: rgba(255,184,77,0.08); }
+.rc-cats { display: flex; flex-wrap: wrap; gap: 12px; }
+.rc-cat { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); display: inline-flex; align-items: center; gap: 6px; }
+.rc-dot { width: 9px; height: 9px; border-radius: 3px; box-shadow: 0 0 6px currentColor; }
+.rc-groups { font-size: 11.5px; color: var(--text-mute); }
+.rc-groups .rc-lab { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--text-faint); margin-right: 6px; }
+.rc-sub { color: var(--text-faint); }
+.pi-actions { display: flex; gap: 8px; }
+.btn.prime { color: var(--accent-deep); border: none; background: var(--accent-grad); font-weight: 600; }
+.btn.prime:hover { filter: brightness(1.06); background: var(--accent-grad); color: var(--accent-deep); }
+.pi-trace { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-mute);
+  background: rgba(0,0,0,0.4); border-radius: 8px; padding: 10px; overflow-x: auto;
+  white-space: pre-wrap; max-height: 160px; margin-top: 2px; }
+.pi-trace.hidden { display: none; }
+
+/* ░░ Toasts (replace blocking alerts) ░░ */
+.toast-host { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; align-items: center; z-index: 90; pointer-events: none; }
+.toast { pointer-events: auto; font-size: 12.5px; color: var(--text); max-width: 460px;
+  background: rgba(18,20,26,0.96); border: 1px solid var(--stroke-cyan); border-radius: 10px;
+  padding: 9px 14px; box-shadow: 0 12px 30px rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+  animation: toastin .22s ease; }
+.toast.out { opacity: 0; transform: translateY(6px); transition: opacity .3s, transform .3s; }
+.toast.good { border-color: rgba(55,211,153,0.5); }
+.toast.warn { border-color: rgba(255,184,77,0.5); }
+.toast.bad { border-color: rgba(255,107,107,0.5); }
+@keyframes toastin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* Scrollbars */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

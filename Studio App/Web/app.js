@@ -98,17 +98,24 @@ async function persistSubgroups() {
    groups + nested sub-groups. The colours mirror the ACTIVE colour profile (the
    real Ableton palette indices Sam picked), and the tree reacts to the Vox/Drums/
    Music sub-group toggles. `cc` = colour category; `sg` = sub-group toggle key. */
+/* Each lane carries a characteristic 9-band spectral shape (20 Hz → 16 kHz) —
+   honest category fingerprints (kick low-heavy, hats airy, vox in the mids), not
+   the old integer-seeded fake sine bars. `cc` = colour category; `sg` = sub-group
+   toggle key. */
 const PREVIEW_LANES = [
-  { name: "Kick",     cc: "drums",  seed: 7  },
-  { name: "Drums",    cc: "drums",  seed: 3,  grp: "GRP", sg: "drums",
-    subs: [ { name: "Kit",  seed: 11 }, { name: "Perc", seed: 5 } ] },
-  { name: "Bass",     cc: "bass",   seed: 9  },
-  { name: "Music",    cc: "music",  seed: 4,  grp: "GRP", sg: "music",
-    subs: [ { name: "Synth", seed: 6 }, { name: "Keys", seed: 13 } ] },
-  { name: "Vox",      cc: "vocals", seed: 8,  grp: "GRP", sg: "vocals",
-    subs: [ { name: "Lauren", seed: 2 }, { name: "Sarah", seed: 15 } ] },
-  { name: "FX",       cc: "fx",     seed: 12 },
-  { name: "Flat Ref", cc: "ref",    seed: 10 },
+  { name: "Kick",     cc: "drums",  spec: [96, 80, 52, 28, 16, 10, 7, 5, 4] },
+  { name: "Drums",    cc: "drums",  grp: "GRP", sg: "drums", spec: [70, 58, 46, 42, 48, 60, 72, 66, 50],
+    subs: [ { name: "Kit", spec: [64, 55, 45, 44, 52, 66, 74, 60, 44] },
+            { name: "Perc", spec: [10, 14, 22, 34, 50, 66, 80, 86, 78] } ] },
+  { name: "Bass",     cc: "bass",   spec: [68, 90, 76, 46, 26, 15, 10, 7, 5] },
+  { name: "Music",    cc: "music",  grp: "GRP", sg: "music", spec: [18, 34, 56, 74, 80, 78, 66, 56, 46],
+    subs: [ { name: "Synth", spec: [14, 28, 52, 70, 82, 80, 68, 58, 48] },
+            { name: "Keys", spec: [22, 40, 60, 72, 74, 66, 54, 42, 32] } ] },
+  { name: "Vox",      cc: "vocals", grp: "GRP", sg: "vocals", spec: [12, 24, 48, 72, 86, 74, 56, 40, 28],
+    subs: [ { name: "Lauren", spec: [14, 26, 50, 74, 84, 72, 54, 38, 26] },
+            { name: "Sarah", spec: [10, 22, 46, 70, 88, 76, 58, 42, 30] } ] },
+  { name: "FX",       cc: "fx",     spec: [8, 12, 20, 32, 45, 58, 70, 82, 88] },
+  { name: "Flat Ref", cc: "ref",    spec: [58, 70, 66, 58, 54, 52, 56, 54, 48] },
 ];
 
 const REF_PALETTE_INDEX = 14; // references are always red (Ableton index 14)
@@ -129,19 +136,20 @@ function activeProfileColor(cc) {
   return cssVar("--cat-" + cc) || "#8a94a0";
 }
 
-/* Deterministic faux-waveform bars (stable per lane, no RNG churn on re-render). */
-function waveBars(seed, count) {
+/* Draw a spectrum as N interpolated bars from a 9-band shape. */
+function specBars(spec) {
+  const n = 15, m = spec.length;
   let out = "";
-  let x = (seed * 9301 + 49297) % 233280;
-  for (let i = 0; i < count; i++) {
-    x = (x * 9301 + 49297) % 233280;
-    const h = 3 + Math.round((x / 233280) * 15); // 3..18px
-    out += `<i style="height:${h}px"></i>`;
+  for (let i = 0; i < n; i++) {
+    const t = (i / (n - 1)) * (m - 1);
+    const lo = Math.floor(t), hi = Math.min(m - 1, lo + 1), f = t - lo;
+    const v = spec[lo] * (1 - f) + spec[hi] * f;
+    out += `<i style="height:${Math.max(6, Math.round(v))}%"></i>`;
   }
   return out;
 }
 
-function laneEl({ name, color, seed, grp, arrow }) {
+function laneEl({ name, color, spec, grp, arrow }) {
   const el = document.createElement("div");
   el.className = "lane" + (arrow ? " sub" : "");
   el.style.color = color;
@@ -149,7 +157,7 @@ function laneEl({ name, color, seed, grp, arrow }) {
     `<span class="tag" style="background:${color}"></span>` +
     `<span class="lane-name">${arrow ? '<span class="arrow">↳</span>' : ""}${escapeHtml(name)}</span>` +
     (grp ? `<span class="grp">${grp}</span>` : "") +
-    `<span class="wave">${waveBars(seed, 26)}</span>`;
+    `<span class="wave">${specBars(spec)}</span>`;
   return el;
 }
 
@@ -160,10 +168,10 @@ function renderPreview() {
   const enabled = State.settings.subgroups || [];
   PREVIEW_LANES.forEach((lane) => {
     const color = activeProfileColor(lane.cc);
-    host.appendChild(laneEl({ name: lane.name, color, seed: lane.seed, grp: lane.grp }));
+    host.appendChild(laneEl({ name: lane.name, color, spec: lane.spec, grp: lane.grp }));
     if (lane.subs && lane.sg && enabled.includes(lane.sg)) {
       lane.subs.forEach((s) =>
-        host.appendChild(laneEl({ name: s.name, color, seed: s.seed, arrow: true })));
+        host.appendChild(laneEl({ name: s.name, color, spec: s.spec, arrow: true })));
     }
   });
 }
@@ -179,18 +187,19 @@ function wireGlobalButtons() {
   $("newProfileBtn").onclick = newProfile;
   $("deleteProfileBtn").onclick = deleteProfile;
   $("closeProgress").onclick = () => $("progressOverlay").classList.add("hidden");
+  $("progressList").addEventListener("click", onProgressAction);
 }
 
 async function checkForUpdate() {
   const a = api();
-  if (!a) { alert("Updates run in the app window."); return; }
+  if (!a) { toast("Updates run in the app window.", "warn"); return; }
   const btn = $("updateBtn");
   const old = btn.textContent;
   btn.textContent = "⟳ Checking…"; btn.disabled = true;
   try {
     const r = await a.update_app();
     if (!r.ok) {
-      alert("Update: " + (r.error || "failed"));
+      toast("Update: " + (r.error || "failed"), "bad");
     } else if (r.needsApply) {
       // Packaged app: a newer EXE is available — confirm, then self-swap.
       const msg = "Version " + r.latest + " is available (you have v" + r.version + ")."
@@ -198,14 +207,14 @@ async function checkForUpdate() {
       if (confirm(msg)) {
         btn.textContent = "⟳ Installing…";
         const ar = await a.apply_update(r.download_url);
-        if (!ar.ok) alert("Install failed: " + (ar.error || "unknown"));
-        else alert("Downloading and installing v" + r.latest + ".\nThe app will close and reopen.");
+        if (!ar.ok) toast("Install failed: " + (ar.error || "unknown"), "bad");
+        else toast("Installing v" + r.latest + " — the app will close and reopen.", "good");
       }
     } else if (r.changed) {
       // Dev/source checkout: git pull happened.
-      alert("Updated to v" + r.version + ".\nClose and relaunch to apply.");
+      toast("Updated to v" + r.version + " — relaunch to apply.", "good");
     } else {
-      alert("You're already on the latest version (v" + (r.version || State.version) + ").");
+      toast("You're on the latest version (v" + (r.version || State.version) + ").", "good");
     }
   } finally {
     btn.textContent = old; btn.disabled = false;
@@ -322,7 +331,7 @@ function shortPaths(paths) {
 async function choosePaths(id) {
   const a = api();
   const proj = State.projects.find((p) => p.id === id);
-  if (!a) { alert("Folder picking works in the app window."); return; }
+  if (!a) { toast("Folder picking works in the app window.", "warn"); return; }
   // Default to a folder pick (most packs are a folder); fall back to files.
   const r = await a.pick_paths("folder");
   if (r && r.ok && r.paths.length) {
@@ -331,6 +340,7 @@ async function choosePaths(id) {
     const rf = await a.pick_paths("files");
     if (rf && rf.ok && rf.paths.length) proj.paths = rf.paths;
   }
+  await maybeAutoTitle(proj);
   renderQueue();
 }
 
@@ -374,11 +384,13 @@ function wireDrop(dz, id) {
 }
 
 /* Assign dropped paths to a project card via the same model the picker uses. */
-function applyDroppedPaths(id, paths) {
+async function applyDroppedPaths(id, paths) {
   const proj = State.projects.find((p) => p.id === id);
   if (!proj || !paths || !paths.length) return;
   proj.paths = paths;
   clearDragHighlights();
+  renderQueue();
+  await maybeAutoTitle(proj);
   renderQueue();
 }
 
@@ -502,7 +514,7 @@ async function runBatch() {
   const payload = ready.map((p) => ({
     paths: p.paths, title: p.title.trim(), profile: p.profile, bpm: p.bpm || null,
   }));
-  if (!a) { alert("Building runs in the app window."); return; }
+  if (!a) { toast("Building runs in the app window.", "warn"); return; }
 
   $("progressOverlay").classList.remove("hidden");
   $("closeProgress").classList.add("hidden");
@@ -531,19 +543,123 @@ function pollStatus() {
 }
 
 function renderProgress(projects) {
+  State.lastStatus = projects;
   const list = $("progressList");
   list.innerHTML = "";
-  projects.forEach((p) => {
-    const item = document.createElement("div");
-    item.className = "progress-item";
-    const left = p.state === "running"
-      ? `<div class="spinner"></div>`
-      : `<span class="chip ${p.state}">${p.state}</span>`;
-    item.innerHTML = `${left}
-      <div class="pi-title">${escapeHtml(p.title)}</div>
-      <div class="pi-msg">${escapeHtml(p.message || "")}</div>`;
-    list.appendChild(item);
-  });
+  projects.forEach((p, idx) => list.appendChild(progressCard(p, idx)));
+}
+
+/* Engine category -> a swatch colour from the active profile (kick rides drums,
+   reference is the fixed red). */
+function catColorFor(cat) {
+  return activeProfileColor({ kick: "drums", reference: "ref" }[cat] || cat);
+}
+
+/* The build Result Card body — the payoff, drawn from Session Report.json. */
+function resultBody(r) {
+  const cats = r.categories || {};
+  const catRow = Object.keys(cats).map((c) =>
+    `<span class="rc-cat"><span class="rc-dot" style="background:${catColorFor(c)}"></span>${escapeHtml(c.toUpperCase())} ${cats[c]}</span>`).join("");
+  const groups = (r.groups || []).map((g) =>
+    g.subgroups && g.subgroups.length
+      ? `${escapeHtml(g.name)} <span class="rc-sub">› ${escapeHtml(g.subgroups.join(", "))}</span>`
+      : escapeHtml(g.name)).join(" &nbsp;·&nbsp; ");
+  const pills = [];
+  if (r.bpm != null) {
+    const conf = r.bpm_source ? `${r.bpm_inliers}/${r.bpm_onsets} on grid` : "manual";
+    pills.push(`<span class="rc-pill">${Math.round(r.bpm)} BPM · ${conf}</span>`);
+  }
+  pills.push(`<span class="rc-pill">${r.tracks_total} tracks</span>`);
+  if (r.multiversion && r.versions) pills.push(`<span class="rc-pill">${r.versions.length} versions</span>`);
+  if (r.buses && r.buses.length) pills.push(`<span class="rc-pill amber">${r.buses.length} bus parked</span>`);
+  if (r.dry_parked && r.dry_parked.length) pills.push(`<span class="rc-pill amber">${r.dry_parked.length} dry parked</span>`);
+  if (r.silent && r.silent.length) pills.push(`<span class="rc-pill amber">${r.silent.length} silent</span>`);
+  if (r.skipped && r.skipped.length) pills.push(`<span class="rc-pill amber">${r.skipped.length} skipped</span>`);
+  if (r.flat_ref_peak != null) pills.push(`<span class="rc-pill">ref peak ${r.flat_ref_peak}</span>`);
+  return `<div class="rc">
+     <div class="rc-pills">${pills.join("")}</div>
+     <div class="rc-cats">${catRow}</div>
+     ${groups ? `<div class="rc-groups"><span class="rc-lab">Groups</span> ${groups}</div>` : ""}
+   </div>`;
+}
+
+function progressCard(p, idx) {
+  const item = document.createElement("div");
+  item.className = "progress-item state-" + p.state;
+  const left = p.state === "running"
+    ? `<div class="spinner"></div>`
+    : `<span class="chip ${p.state}">${p.state}</span>`;
+  let html = `<div class="pi-head">${left}
+     <div class="pi-title">${escapeHtml(p.title)}</div>
+     <div class="pi-msg">${escapeHtml(p.message || "")}</div></div>`;
+  if (p.report && (p.state === "done" || p.state === "warn")) {
+    html += resultBody(p.report);
+    html += `<div class="pi-actions">
+       ${p.als ? `<button class="btn tiny prime" data-action="open" data-idx="${idx}">Open in Ableton</button>` : ""}
+       ${p.folder ? `<button class="btn tiny" data-action="reveal" data-idx="${idx}">Reveal folder</button>` : ""}
+     </div>`;
+  } else if (p.state === "failed") {
+    html += `<div class="pi-actions">
+       ${p.folder ? `<button class="btn tiny" data-action="reveal" data-idx="${idx}">Reveal folder</button>` : ""}
+       ${p.trace ? `<button class="btn tiny" data-action="details" data-idx="${idx}">Show details</button>` : ""}
+     </div>
+     <pre class="pi-trace hidden" id="tr${idx}">${escapeHtml(p.trace || "")}</pre>`;
+  }
+  item.innerHTML = html;
+  return item;
+}
+
+async function onProgressAction(e) {
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const idx = +btn.dataset.idx;
+  const p = (State.lastStatus || [])[idx];
+  if (!p) return;
+  const act = btn.dataset.action;
+  if (act === "details") {
+    const pre = $("tr" + idx); if (pre) pre.classList.toggle("hidden");
+    return;
+  }
+  const a = api();
+  if (!a) { toast("That works in the app window.", "warn"); return; }
+  if (act === "open") {
+    const r = await a.open_project(p.als);
+    if (!r || !r.ok) toast("Couldn't open: " + ((r && r.error) || "unknown"), "bad");
+  } else if (act === "reveal") {
+    const r = await a.reveal_folder(p.folder);
+    if (!r || !r.ok) toast("Couldn't open folder: " + ((r && r.error) || "unknown"), "bad");
+  }
+}
+
+/* Calm inline toast — replaces blocking alert()s (a raw popup in front of a
+   label looks broken). kind: '' | 'good' | 'warn' | 'bad'. */
+function toast(msg, kind) {
+  let host = $("toastHost");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toastHost";
+    host.className = "toast-host";
+    document.body.appendChild(host);
+  }
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.textContent = msg;
+  host.appendChild(t);
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, 3800);
+}
+
+/* Pre-fill a card's title from the dropped folder/zip name (engine guesses it).
+   Never overwrites something the user already typed. */
+async function maybeAutoTitle(proj) {
+  if (proj.title && proj.title.trim()) return;
+  const a = api();
+  if (!a) return;
+  try {
+    const r = await a.suggest_title(proj.paths);
+    if (r && r.ok && r.title && !(proj.title && proj.title.trim())) {
+      proj.title = r.title;
+    }
+  } catch (e) { /* auto-title is a nicety — never block ingest */ }
 }
 
 function escapeHtml(s) {
