@@ -77,9 +77,14 @@ def test_end_to_end_special_folders():
     assert len(als) == 1, "expected a single project, got " + str(len(als))
     assert validate_path(als[0], expected_tempo=124).ok
 
-    colors = _track_colors(decompress_als(als[0]))
+    lines = decompress_als(als[0])
+    colors = _track_colors(lines)
     assert UPDATED_TRACK_COLOR in colors, "no updated-stem track (colour missing)"
-    assert REFCOMPARE_COLOR in colors, "no external-reference track (colour missing)"
+    # All refs on ONE 'References' track (colour REFCOMPARE_COLOR), not one each.
+    assert colors.count(REFCOMPARE_COLOR) == 1, "refs should be on a single track"
+    # A numbered locator on the energetic part of each ref (2 refs -> 2 locators).
+    n_locators = sum(1 for ln in lines if "<Locator Id=" in ln)
+    assert n_locators == 2, "expected one locator per ref, got " + str(n_locators)
 
     rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
     assert sorted(rep["updated_stems"]) == ["Sample Bass", "Sub Bass"], rep["updated_stems"]

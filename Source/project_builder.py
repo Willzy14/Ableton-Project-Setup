@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from stem_classifier import (classify_stems, classify_stem, apply_track_names,
                              find_dry_stems, CATEGORIES, AUDIO_EXTENSIONS)
 from als_patcher import (patch_project, find_audio_regions, CLIP_START_BEATS,
-                         SILENCE_FLOOR_DB)
+                         SILENCE_FLOOR_DB, get_wav_info)
 from bpm_detector import detect_bpm
 from bounce import sum_stems_to_wav
 from stem_analysis import audio_label, find_group_buses
@@ -403,6 +403,38 @@ def _build_groups_report(stems):
         if sg and sg not in groups[g]:
             groups[g].append(sg)
     return [{"name": g, "subgroups": subs} for g, subs in groups.items()]
+
+
+def _find_energetic_point(path, win_sec=2.0, intro_skip_sec=8.0, smooth_sec=8.0):
+    """Time (sec) of the ENERGETIC part of a full track — the drop/hook, used to
+    drop an A/B locator. Finds the onset of the loudest sustained section (peak
+    smoothed RMS, skipping the intro). Returns 0.0 if it can't analyse."""
+    try:
+        import numpy as np
+        import soundfile as sf
+    except Exception:  # noqa: BLE001 — no numpy/soundfile -> marker at the start
+        return 0.0
+    try:
+        data, sr = sf.read(str(path), always_2d=True)
+    except Exception:  # noqa: BLE001
+        return 0.0
+    x = data.mean(axis=1).astype("float64")
+    win = int(win_sec * sr)
+    if win < 1 or len(x) < win * 2:
+        return 0.0
+    n = len(x) // win
+    rms = np.sqrt((x[:n * win].reshape(n, win) ** 2).mean(axis=1) + 1e-12)
+    k = max(1, int(round(smooth_sec / win_sec)))
+    sm = np.convolve(rms, np.ones(k) / k, mode="same")
+    peak = float(sm.max())
+    if peak <= 0:
+        return 0.0
+    intro = int(round(intro_skip_sec / win_sec))
+    thr = 0.9 * peak
+    for i in range(len(sm)):
+        if i >= intro and sm[i] >= thr:
+            return float(i * win_sec)
+    return float(int(np.argmax(sm)) * win_sec)
 
 
 def _collect_flags(unmatched_updated, skipped, bpm_meta, bpm, silent_tracks):
@@ -930,28 +962,43 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         })
 
     # External reference tracks (other artists' tracks from a 'ref' subfolder):
-    # laid to the RIGHT of the arrangement (after the song), routed to Ext. Out
-    # (bypasses the master), LEFT ON, own colour — so Sam can play them, then
-    # come back to his mix and judge how close it sits. Never summed.
+    # ALL on ONE "References" track, laid out one after another to the RIGHT of
+    # the arrangement (after the song). Routed to Ext. Out (bypasses the master),
+    # LEFT ON, own colour — so Sam can flick across and A/B against his mix. Never
+    # summed. A numbered locator is dropped on the ENERGETIC part (the drop) of
+    # each ref so he can jump straight to the meat of each.
     refcompare_tracks = []
+    ref_locators = []
     if refcompare_files:
         max_end_sec = 0.0
         for s in stems:
             for (_rs, _re) in (s.get("regions") or []):
                 max_end_sec = max(max_end_sec, _re)
         content_end = CLIP_START_BEATS + (max_end_sec / 60.0) * float(bpm)
-        right_offset = _next_phrase_boundary(content_end + 16.0)
-        for f in refcompare_files:
+        cursor = _next_phrase_boundary(content_end + 16.0)
+        clips = []
+        for i, f in enumerate(refcompare_files):
             dest = audio_folder / f.name
             if not dest.exists():
                 shutil.copy2(f, dest)
-            print("  external reference (A/B, right side, Ext. Out, on): " + f.name)
-            refcompare_tracks.append({
-                "name": f.stem, "clip_name": f.stem,
-                "category": "refcompare", "color": REFCOMPARE_COLOR,
-                "file_path": dest, "rel_path": "Audio/" + f.name,
-                "regions": None, "base_start_beat": right_offset,
-            })
+            n_frames, sr_hz, _ = get_wav_info(dest)
+            dur_beats = (n_frames / float(sr_hz) / 60.0) * float(bpm) if sr_hz else 8.0
+            energetic_sec = _find_energetic_point(dest)
+            ref_locators.append((cursor + (energetic_sec / 60.0) * float(bpm),
+                                 str(i + 1) + " · " + f.stem[:28]))
+            clips.append({"file_path": dest, "rel_path": "Audio/" + f.name,
+                          "regions": None, "start_beat": cursor, "clip_name": f.stem})
+            print("  ref " + str(i + 1) + " (one track, Ext. Out, on): " + f.name
+                  + ("  [energetic @ %.0fs]" % energetic_sec))
+            cursor = math.ceil((cursor + dur_beats + 8.0) / 4.0) * 4.0  # gap, snap to bar
+        primary = clips[0]
+        refcompare_tracks.append({
+            "name": "References", "clip_name": primary["clip_name"],
+            "category": "refcompare", "color": REFCOMPARE_COLOR,
+            "file_path": primary["file_path"], "rel_path": primary["rel_path"],
+            "regions": None, "base_start_beat": primary["start_beat"],
+            "extra_clips": clips[1:],
+        })
 
     mix_files = [s["file_path"] for s in stems if not s.get("updated")]
     print("\nBouncing flat reference (summing " + str(len(mix_files)) + " mix stems)...")
@@ -1002,6 +1049,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         stems=all_stems,
         bpm=float(bpm),
         project_audio_dir=audio_folder,
+        locators=ref_locators,
     )
 
     print("\nProject created:")
@@ -1028,7 +1076,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "references_supplied": len(references),
         "references_preseeded": len(preseeded_refs),
         "updated_stems": [Path(f).stem for f in updated_files],
-        "refcompare": [t["name"] for t in refcompare_tracks],
+        "refcompare": [Path(f).stem for f in refcompare_files],
         "flat_ref_peak": round(float(summary["peak"]), 3),
         "skipped": list(summary.get("skipped", [])),
         "flags": _collect_flags(unmatched_updated, summary.get("skipped", []),
