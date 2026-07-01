@@ -87,6 +87,32 @@ def test_prepare_single_clean_folder_used_in_place():
     assert folder == stems   # no needless staging copy when it's already clean WAVs
 
 
+def test_prepare_single_zip_preserves_subfolders():
+    # A single dropped .zip with UPDATE STEMS / REF subfolders must extract with
+    # those subfolders INTACT (and no duplicate) so the engine reads one project,
+    # not a false second version. (The BESH - Tequila zip bug.)
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Source"))
+    from versions import detect_versions
+
+    tmp = Path(tempfile.mkdtemp())
+    src = tmp / "src"
+    for i in range(6):
+        _tone(src / ("%02d_Stem.wav" % i), f=80 + i * 20)
+    _tone(src / "UPDATE STEMS" / "Sub Bass.wav", f=70)
+    _tone(src / "REF" / "Other Artist.wav", f=200)
+    zpath = tmp / "BESH - pack.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        for f in src.rglob("*.wav"):
+            z.write(f, str(f.relative_to(src)))
+
+    folder = ea.prepare_stem_folder([zpath], tmp / "work")
+    subs = sorted(d.name for d in Path(folder).iterdir() if d.is_dir())
+    assert subs == ["REF", "UPDATE STEMS"], subs        # subfolders preserved, no _zip_ dupe
+    assert len(ea._audio_files_in(folder)) == 6         # 6 top stems, not doubled
+    assert detect_versions(folder) is None              # ONE project, not two
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

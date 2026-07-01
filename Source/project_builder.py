@@ -518,12 +518,19 @@ def _extract_special_dirs(classified, references, unclassified):
 
 
 def _match_key(path):
-    """Identity key for pairing an updated stem to the original it replaces —
-    the element key with update words (updated/revised/new/fix) also stripped."""
-    from versions import element_key
-    k = element_key(path)
-    k = re.sub(r"(?i)\b(updat\w*|revis\w*|new|replacement|corrected|amended|fixe?d?)\b", " ", k)
-    return re.sub(r"\s+", " ", k).strip() or k
+    """Identity key for pairing an updated stem to the original it replaces.
+
+    Robust to real names like 'UPDATE_STEM_ SUB BASS_2': strips an update prefix/
+    words, a leading export index, and a trailing counter, then normalises — so
+    it lands next to '…Sub Bass'."""
+    name = Path(path).stem
+    name = re.sub(r"(?i)^\s*(update[_\s]*stems?|updated?|revis\w*|new)[_\s]*", " ", name)
+    name = re.sub(r"(?i)^\s*stem[_\s]*\d{1,3}[_\-\s.]*", " ", name)  # 'STEM N -' prefix
+    name = re.sub(r"(?i)\b(updat\w*|revis\w*|replacement|corrected|amended|fixe?d?|new)\b", " ", name)
+    name = re.sub(r"^\s*\d{1,3}[_\-\s.]+", " ", name)     # leading export index
+    name = re.sub(r"[_\-]", " ", name)
+    name = re.sub(r"\s+\d{1,2}$", "", name)               # trailing counter
+    return re.sub(r"\s+", " ", name).strip().lower() or Path(path).stem.lower()
 
 
 def _apply_subgroups(stems, scope):

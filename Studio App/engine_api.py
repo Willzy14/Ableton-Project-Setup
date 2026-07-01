@@ -197,53 +197,47 @@ def _find_audio_root(folder):
     return best
 
 
-def _convert_aiff_to_wav(src, dest_dir):
-    """Convert an AIFF to WAV via soundfile (the 3.13 ML env has it)."""
-    import soundfile as sf  # local import: optional dependency
-    data, sr = sf.read(str(src))
-    out = dest_dir / (src.stem + ".wav")
-    sf.write(str(out), data, sr)
-    return out
-
-
 def prepare_stem_folder(paths, workdir):
-    """Resolve dropped path(s) into a single folder of WAV stems.
+    """Resolve dropped path(s) into ONE folder for the engine to scan.
 
-    Accepts any mix of: a folder of stems, .zip archives, and loose WAV/AIFF
-    files. WAVs are used in place when a clean folder was dropped; otherwise
-    files are staged into ``workdir`` (AIFF converted to WAV). Returns the
-    folder build_project should scan.
+    A single dropped folder or .zip is returned with its subfolder structure
+    INTACT (so 'UPDATE STEMS' / 'REF' / version subfolders survive) — the engine
+    resolves the tree and converts any non-WAV audio itself. Only a mix of loose
+    files / multiple inputs is flattened into ``workdir``.
     """
     paths = [Path(p) for p in paths]
 
-    # Fast path: a single dropped folder with audio and no AIFF -> use directly.
+    # Single folder: scan it in place — subfolders preserved.
     if len(paths) == 1 and paths[0].is_dir():
-        root = _find_audio_root(paths[0])
-        has_aiff = any(p.suffix.lower() in (".aif", ".aiff")
-                       for p in _audio_files_in(root))
-        if not has_aiff:
-            return root
+        return _find_audio_root(paths[0])
 
+    # Single zip: extract and scan the extraction root — subfolders preserved.
+    # (The old code copied only the top-level files AND left a duplicate
+    # '_zip_...' folder beside them, which was then mis-read as a 2nd version.)
+    if len(paths) == 1 and paths[0].suffix.lower() == ".zip":
+        ex = Path(workdir)
+        ex.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(paths[0]) as z:
+            z.extractall(ex)
+        return _find_audio_root(ex)
+
+    # Otherwise: loose files / multiple inputs — flatten into one staged folder.
     staged = Path(workdir)
     staged.mkdir(parents=True, exist_ok=True)
 
     def _ingest_file(f):
-        if f.suffix.lower() in (".aif", ".aiff"):
-            _convert_aiff_to_wav(f, staged)
-        elif f.suffix.lower() in AUDIO_EXTENSIONS:
-            shutil.copy2(f, staged / f.name)
+        if f.suffix.lower() in AUDIO_EXTENSIONS:
+            shutil.copy2(f, staged / f.name)   # non-WAV converted later by the engine
 
     for p in paths:
         if p.is_dir():
-            root = _find_audio_root(p)
-            for f in _audio_files_in(root):
+            for f in _audio_files_in(_find_audio_root(p)):
                 _ingest_file(f)
         elif p.suffix.lower() == ".zip":
-            ex = staged / ("_zip_" + p.stem)
+            ex = Path(tempfile.mkdtemp(prefix="_zip_"))   # outside staged, no duplicate
             with zipfile.ZipFile(p) as z:
                 z.extractall(ex)
-            root = _find_audio_root(ex)
-            for f in _audio_files_in(root):
+            for f in _audio_files_in(_find_audio_root(ex)):
                 _ingest_file(f)
         else:
             _ingest_file(p)
