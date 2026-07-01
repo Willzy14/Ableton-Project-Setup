@@ -9,6 +9,8 @@ const State = {
   settings: { output_folder: "", active_profile: "" },
   editProfile: null,   // working copy in the colours modal
   polling: null,
+  buildOrder: null,    // ready projects in the order run_batch consumed them
+  batchRunning: false, // true while a batch build is in flight
 };
 
 let nextId = 1;
@@ -186,8 +188,11 @@ function wireGlobalButtons() {
   $("saveProfileBtn").onclick = saveProfile;
   $("newProfileBtn").onclick = newProfile;
   $("deleteProfileBtn").onclick = deleteProfile;
-  $("closeProgress").onclick = () => $("progressOverlay").classList.add("hidden");
-  $("progressList").addEventListener("click", onProgressAction);
+  // #progressOverlay is retained in the DOM but no longer used — the build
+  // status + result now live inline on each queue card. Guard the wiring in
+  // case the element is later removed.
+  const cp = $("closeProgress");
+  if (cp) cp.onclick = () => $("progressOverlay").classList.add("hidden");
 }
 
 async function checkForUpdate() {
@@ -253,8 +258,13 @@ function renderQueue() {
 }
 
 function renderCard(proj) {
+  const st = proj.status || null;                 // polled status entry, if any
+  const state = st ? st.state : null;             // pending|running|done|warn|failed
+  const busy = state === "running" || state === "pending";
+  const finished = state === "done" || state === "warn" || state === "failed";
+
   const card = document.createElement("div");
-  card.className = "card";
+  card.className = "card" + (state ? " state-" + state : "");
 
   // dropzone
   const dz = document.createElement("div");
@@ -263,12 +273,15 @@ function renderCard(proj) {
     ? `<div class="dz-icon">✓</div>
        <div class="dz-main">${proj.paths.length} item${proj.paths.length > 1 ? "s" : ""} ready</div>
        <div class="dz-sub">${shortPaths(proj.paths)}</div>
-       <div class="dz-sub">click to change</div>`
+       <div class="dz-sub">${busy ? "building…" : "click to change"}</div>`
     : `<div class="dz-icon">⬇</div>
        <div class="dz-main">Drop stems here</div>
        <div class="dz-sub">folder, WAV / AIFF, or .zip — click to browse</div>`;
-  dz.onclick = () => choosePaths(proj.id);
-  wireDrop(dz, proj.id);
+  // Lock ingest while this card is building; otherwise wire the picker + drop.
+  if (!busy) {
+    dz.onclick = () => choosePaths(proj.id);
+    wireDrop(dz, proj.id);
+  }
 
   // fields
   const fields = document.createElement("div");
@@ -278,49 +291,126 @@ function renderCard(proj) {
   title.type = "text";
   title.placeholder = "Artist - Title [Label]";
   title.value = proj.title;
+  title.disabled = !!busy;
   title.oninput = () => { proj.title = title.value; updateSummary(); };
+  fields.appendChild(title);
 
-  const row = document.createElement("div");
-  row.className = "card-row";
+  if (finished && st.report && (state === "done" || state === "warn")) {
+    // ── Result inline, in place of the profile+BPM row ──
+    fields.appendChild(resultEl(st.report));
+  } else if (finished && state === "failed") {
+    fields.appendChild(failEl(proj, st));
+  } else if (busy) {
+    fields.appendChild(buildingEl(st));
+  } else {
+    // ── Editable controls (default, pre-build) ──
+    const row = document.createElement("div");
+    row.className = "card-row";
 
-  const profWrap = document.createElement("label");
-  profWrap.className = "field";
-  profWrap.innerHTML = `<span class="field-label">Colour profile</span>`;
-  const prof = document.createElement("select");
-  prof.className = "select";
-  State.profiles.forEach((p) => prof.add(new Option(p.name, p.name)));
-  prof.value = proj.profile && State.profiles.some((p) => p.name === proj.profile)
-    ? proj.profile : State.settings.active_profile;
-  proj.profile = prof.value;
-  prof.onchange = () => { proj.profile = prof.value; };
-  profWrap.appendChild(prof);
+    const profWrap = document.createElement("label");
+    profWrap.className = "field";
+    profWrap.innerHTML = `<span class="field-label">Colour profile</span>`;
+    const prof = document.createElement("select");
+    prof.className = "select";
+    State.profiles.forEach((p) => prof.add(new Option(p.name, p.name)));
+    prof.value = proj.profile && State.profiles.some((p) => p.name === proj.profile)
+      ? proj.profile : State.settings.active_profile;
+    proj.profile = prof.value;
+    prof.onchange = () => { proj.profile = prof.value; };
+    profWrap.appendChild(prof);
 
-  const bpmWrap = document.createElement("label");
-  bpmWrap.className = "field bpm-field";
-  bpmWrap.innerHTML = `<span class="field-label">BPM (blank = auto)</span>`;
-  const bpm = document.createElement("input");
-  bpm.className = "input";
-  bpm.type = "text";
-  bpm.placeholder = "auto";
-  bpm.value = proj.bpm;
-  bpm.oninput = () => { proj.bpm = bpm.value.trim(); };
-  bpmWrap.appendChild(bpm);
+    const bpmWrap = document.createElement("label");
+    bpmWrap.className = "field bpm-field";
+    bpmWrap.innerHTML = `<span class="field-label">BPM (blank = auto)</span>`;
+    const bpm = document.createElement("input");
+    bpm.className = "input";
+    bpm.type = "text";
+    bpm.placeholder = "auto";
+    bpm.value = proj.bpm;
+    bpm.oninput = () => { proj.bpm = bpm.value.trim(); };
+    bpmWrap.appendChild(bpm);
 
-  row.append(profWrap, bpmWrap);
-  fields.append(title, row);
+    row.append(profWrap, bpmWrap);
+    fields.append(row);
+  }
 
-  // side
+  // side — remove button (top) + action lights (bottom)
   const side = document.createElement("div");
   side.className = "card-side";
   const rm = document.createElement("button");
   rm.className = "remove-btn";
   rm.textContent = "✕";
-  rm.title = "Remove project";
-  rm.onclick = () => removeProject(proj.id);
+  rm.title = busy ? "Building…" : "Remove project";
+  rm.disabled = !!busy;
+  rm.onclick = () => { if (!busy) removeProject(proj.id); };
   side.appendChild(rm);
+
+  side.appendChild(actionLights(proj, st));
 
   card.append(dz, fields, side);
   return card;
+}
+
+/* Live "building" state shown in the fields column while a card is mid-build. */
+function buildingEl(st) {
+  const el = document.createElement("div");
+  el.className = "card-build";
+  el.innerHTML = st && st.state === "running"
+    ? `<div class="cb-line"><div class="spinner"></div><span class="cb-msg">${escapeHtml(st.message || "Building…")}</span></div>`
+    : `<div class="cb-line"><span class="chip pending">pending</span><span class="cb-msg">${escapeHtml((st && st.message) || "Queued…")}</span></div>`;
+  return el;
+}
+
+/* Failed state shown inline, with an expandable trace. */
+function failEl(proj, st) {
+  const el = document.createElement("div");
+  el.className = "card-build fail";
+  const trId = "tr" + proj.id;
+  el.innerHTML =
+    `<div class="cb-line"><span class="chip failed">failed</span>
+       <span class="cb-msg">${escapeHtml(st.message || "Build failed")}</span></div>` +
+    (st.trace ? `<pre class="pi-trace hidden" id="${trId}">${escapeHtml(st.trace)}</pre>` : "");
+  if (st.trace) {
+    const t = document.createElement("button");
+    t.className = "btn tiny cb-trace";
+    t.textContent = "Show details";
+    t.onclick = () => { const pre = $(trId); if (pre) pre.classList.toggle("hidden"); };
+    el.querySelector(".cb-line").appendChild(t);
+  }
+  return el;
+}
+
+/* "Open in Ableton" / "Reveal folder" action lights + a Build-again reset.
+   Dim/disabled before & during a build; light up (accent .prime) once done. */
+function actionLights(proj, st) {
+  const wrap = document.createElement("div");
+  wrap.className = "card-lights";
+  const ready = st && (st.state === "done" || st.state === "warn");
+  const finished = st && (st.state === "done" || st.state === "warn" || st.state === "failed");
+
+  const open = document.createElement("button");
+  open.className = "btn tiny light" + (ready && st.als ? " prime" : "");
+  open.textContent = "Open in Ableton";
+  open.disabled = !(ready && st.als);
+  open.onclick = () => openProjectAls(st && st.als);
+
+  const reveal = document.createElement("button");
+  reveal.className = "btn tiny light";
+  reveal.textContent = "Reveal folder";
+  reveal.disabled = !(finished && st.folder);
+  reveal.onclick = () => revealFolder(st && st.folder);
+
+  wrap.append(open, reveal);
+
+  if (finished) {
+    const again = document.createElement("button");
+    again.className = "btn tiny cb-reset";
+    again.textContent = "↺ Build again";
+    again.title = "Clear this result and re-queue the project";
+    again.onclick = () => resetCard(proj.id);
+    wrap.appendChild(again);
+  }
+  return wrap;
 }
 
 function shortPaths(paths) {
@@ -409,14 +499,27 @@ window.__wmReceiveDrop = function (paths) {
 };
 
 function updateSummary() {
-  const ready = State.projects.filter((p) => p.paths.length && p.title.trim());
   const s = $("summary");
+  const go = $("goBtn");
+  if (State.batchRunning) {
+    const active = State.projects.filter(
+      (p) => p.status && (p.status.state === "running" || p.status.state === "pending")).length;
+    s.innerHTML = `<b>${active}</b> building… <span class="mono">leave it running ☕</span>`;
+    go.disabled = true;
+    return;
+  }
+  // Buildable = has stems + a title and isn't already showing a result.
+  const ready = State.projects.filter((p) => p.paths.length && p.title.trim() && !p.status);
+  const doneCount = State.projects.filter((p) => p.status &&
+    (p.status.state === "done" || p.status.state === "warn")).length;
   if (ready.length === 0) {
-    s.innerHTML = "No projects ready — drop stems and add a title";
+    s.innerHTML = doneCount
+      ? `<b>${doneCount}</b> built — reset a card to build again`
+      : "No projects ready — drop stems and add a title";
   } else {
     s.innerHTML = `<b>${ready.length}</b> project${ready.length > 1 ? "s" : ""} ready to build`;
   }
-  $("goBtn").disabled = ready.length === 0;
+  go.disabled = ready.length === 0;
 }
 
 /* ---- colours modal ---- */
@@ -509,18 +612,32 @@ async function deleteProfile() {
 /* ---- batch build ---- */
 async function runBatch() {
   const a = api();
-  const ready = State.projects.filter((p) => p.paths.length && p.title.trim());
+  // Only cards that are ready AND not already showing a result get re-built.
+  const ready = State.projects.filter(
+    (p) => p.paths.length && p.title.trim() && !p.status);
   if (!ready.length) return;
   const payload = ready.map((p) => ({
     paths: p.paths, title: p.title.trim(), profile: p.profile, bpm: p.bpm || null,
   }));
   if (!a) { toast("Building runs in the app window.", "warn"); return; }
 
-  $("progressOverlay").classList.remove("hidden");
-  $("closeProgress").classList.add("hidden");
-  $("progressNote").textContent = "Working… you can leave this running. ☕";
+  // run_batch consumes the READY projects in THIS order; remember it so the
+  // polled status[i] maps straight back onto buildOrder[i]. Seed each card as
+  // pending immediately so the UI reacts before the first poll lands.
+  State.buildOrder = ready;
+  ready.forEach((p) => { p.status = { state: "pending", message: "Queued…" }; });
+  State.batchRunning = true;
+  renderQueue();
+
   const r = await a.run_batch(payload);
-  if (r && !r.ok) { $("progressNote").textContent = r.error; return; }
+  if (r && !r.ok) {
+    State.batchRunning = false;
+    State.buildOrder = null;
+    ready.forEach((p) => { p.status = null; });
+    renderQueue();
+    toast(r.error || "Couldn't start the batch.", "bad");
+    return;
+  }
   pollStatus();
 }
 
@@ -529,24 +646,28 @@ function pollStatus() {
   clearInterval(State.polling);
   State.polling = setInterval(async () => {
     const s = await a.get_status();
-    renderProgress(s.projects);
+    applyStatusToCards(s.projects);
     if (!s.running) {
       clearInterval(State.polling);
+      State.batchRunning = false;
+      renderQueue();
       const done = s.projects.filter((p) => p.state === "done").length;
       const failed = s.projects.filter((p) => p.state === "failed").length;
       const warn = s.projects.filter((p) => p.state === "warn").length;
-      $("progressNote").textContent =
-        `Finished — ${done} built` + (warn ? `, ${warn} to check` : "") + (failed ? `, ${failed} failed` : "") + ". Open your output folder.";
-      $("closeProgress").classList.remove("hidden");
+      toast(`Finished — ${done} built`
+        + (warn ? `, ${warn} to check` : "")
+        + (failed ? `, ${failed} failed` : "") + ".",
+        failed ? "bad" : warn ? "warn" : "good");
     }
   }, 700);
 }
 
-function renderProgress(projects) {
-  State.lastStatus = projects;
-  const list = $("progressList");
-  list.innerHTML = "";
-  projects.forEach((p, idx) => list.appendChild(progressCard(p, idx)));
+/* Map the polled status array back onto the queue cards by build order, then
+   re-render so each card shows its own live state / result inline. */
+function applyStatusToCards(statusList) {
+  const order = State.buildOrder || [];
+  statusList.forEach((st, i) => { if (order[i]) order[i].status = st; });
+  renderQueue();
 }
 
 /* Engine category -> a swatch colour from the active profile (kick rides drums,
@@ -555,7 +676,8 @@ function catColorFor(cat) {
   return activeProfileColor({ kick: "drums", reference: "ref" }[cat] || cat);
 }
 
-/* The build Result Card body — the payoff, drawn from Session Report.json. */
+/* The build Result Card body — the payoff, drawn from Session Report.json.
+   Rendered inline inside the project card (in place of the profile+BPM row). */
 function resultBody(r) {
   const cats = r.categories || {};
   const catRow = Object.keys(cats).map((c) =>
@@ -571,6 +693,11 @@ function resultBody(r) {
   }
   pills.push(`<span class="rc-pill">${r.tracks_total} tracks</span>`);
   if (r.multiversion && r.versions) pills.push(`<span class="rc-pill">${r.versions.length} versions</span>`);
+  // New engine report fields — render only when non-empty.
+  if (r.updated_stems && r.updated_stems.length)
+    pills.push(`<span class="rc-pill amber">${r.updated_stems.length} updated (${escapeHtml(r.updated_stems.join(", "))})</span>`);
+  if (r.refcompare && r.refcompare.length)
+    pills.push(`<span class="rc-pill">${r.refcompare.length} ref track${r.refcompare.length > 1 ? "s" : ""}</span>`);
   if (r.buses && r.buses.length) pills.push(`<span class="rc-pill amber">${r.buses.length} bus parked</span>`);
   if (r.dry_parked && r.dry_parked.length) pills.push(`<span class="rc-pill amber">${r.dry_parked.length} dry parked</span>`);
   if (r.silent && r.silent.length) pills.push(`<span class="rc-pill amber">${r.silent.length} silent</span>`);
@@ -583,52 +710,35 @@ function resultBody(r) {
    </div>`;
 }
 
-function progressCard(p, idx) {
-  const item = document.createElement("div");
-  item.className = "progress-item state-" + p.state;
-  const left = p.state === "running"
-    ? `<div class="spinner"></div>`
-    : `<span class="chip ${p.state}">${p.state}</span>`;
-  let html = `<div class="pi-head">${left}
-     <div class="pi-title">${escapeHtml(p.title)}</div>
-     <div class="pi-msg">${escapeHtml(p.message || "")}</div></div>`;
-  if (p.report && (p.state === "done" || p.state === "warn")) {
-    html += resultBody(p.report);
-    html += `<div class="pi-actions">
-       ${p.als ? `<button class="btn tiny prime" data-action="open" data-idx="${idx}">Open in Ableton</button>` : ""}
-       ${p.folder ? `<button class="btn tiny" data-action="reveal" data-idx="${idx}">Reveal folder</button>` : ""}
-     </div>`;
-  } else if (p.state === "failed") {
-    html += `<div class="pi-actions">
-       ${p.folder ? `<button class="btn tiny" data-action="reveal" data-idx="${idx}">Reveal folder</button>` : ""}
-       ${p.trace ? `<button class="btn tiny" data-action="details" data-idx="${idx}">Show details</button>` : ""}
-     </div>
-     <pre class="pi-trace hidden" id="tr${idx}">${escapeHtml(p.trace || "")}</pre>`;
-  }
-  item.innerHTML = html;
-  return item;
+/* Wrap resultBody() as a DOM node for appending into the card. */
+function resultEl(report) {
+  const el = document.createElement("div");
+  el.innerHTML = resultBody(report);
+  return el.firstElementChild;
 }
 
-async function onProgressAction(e) {
-  const btn = e.target.closest("[data-action]");
-  if (!btn) return;
-  const idx = +btn.dataset.idx;
-  const p = (State.lastStatus || [])[idx];
-  if (!p) return;
-  const act = btn.dataset.action;
-  if (act === "details") {
-    const pre = $("tr" + idx); if (pre) pre.classList.toggle("hidden");
-    return;
-  }
+async function openProjectAls(als) {
+  if (!als) return;
   const a = api();
   if (!a) { toast("That works in the app window.", "warn"); return; }
-  if (act === "open") {
-    const r = await a.open_project(p.als);
-    if (!r || !r.ok) toast("Couldn't open: " + ((r && r.error) || "unknown"), "bad");
-  } else if (act === "reveal") {
-    const r = await a.reveal_folder(p.folder);
-    if (!r || !r.ok) toast("Couldn't open folder: " + ((r && r.error) || "unknown"), "bad");
-  }
+  const r = await a.open_project(als);
+  if (!r || !r.ok) toast("Couldn't open: " + ((r && r.error) || "unknown"), "bad");
+}
+
+async function revealFolder(folder) {
+  if (!folder) return;
+  const a = api();
+  if (!a) { toast("That works in the app window.", "warn"); return; }
+  const r = await a.reveal_folder(folder);
+  if (!r || !r.ok) toast("Couldn't open folder: " + ((r && r.error) || "unknown"), "bad");
+}
+
+/* Clear a finished/failed card back to an editable, buildable state. */
+function resetCard(id) {
+  const proj = State.projects.find((p) => p.id === id);
+  if (!proj) return;
+  proj.status = null;
+  renderQueue();
 }
 
 /* Calm inline toast — replaces blocking alert()s (a raw popup in front of a

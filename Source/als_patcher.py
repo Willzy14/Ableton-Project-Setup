@@ -1329,7 +1329,13 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir,
         if cat == "reference":
             set_track_output_external(lines, audio_ref[tidx])
             set_track_muted(lines, audio_ref[tidx])
+        elif cat == "refcompare":
+            # Other artists' A/B tracks: Ext. Out (bypass master) but LEFT ON.
+            set_track_output_external(lines, audio_ref[tidx])
         elif cat == "bus":
+            set_track_muted(lines, audio_ref[tidx])
+        # Generic per-track mute (e.g. an updated A/B stem sitting live in a group).
+        if stem.get("muted") and cat not in ("reference", "bus"):
             set_track_muted(lines, audio_ref[tidx])
 
     # Working-track groups: wrap each groupable category with 2+ stems in a

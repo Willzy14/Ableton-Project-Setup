@@ -53,6 +53,16 @@ DRY_GROUP_COLOR = 37
 # bottom with its own colour so it's obviously a dead export. 12 = a distinct
 # tone; change the index if you'd prefer another (palette is 0-69).
 SILENT_TRACK_COLOR = 12
+# Updated/revised stems (from an 'updated stems' subfolder): placed right next to
+# the original they replace, muted (off) and in their own colour so you can A/B
+# them in the arrangement. 5 = a bright lime — reads as "new". Excluded from the
+# flat-ref sum (it's a duplicate element).
+UPDATED_TRACK_COLOR = 5
+# External reference tracks (other artists' tracks from a 'ref' subfolder): laid
+# to the RIGHT of the arrangement, routed to Ext. Out (bypasses the master),
+# LEFT ON (audible) and given their own colour so you can A/B your mix against
+# them. 26 = magenta — distinct from the red flat-ref.
+REFCOMPARE_COLOR = 26
 # Where built projects land by default. Sam's in-progress stem mixes live here,
 # so a freshly set-up project belongs alongside them — and this keeps generated
 # output OUT of the code repo (an env/config override still wins). CLI only; the
@@ -478,6 +488,44 @@ def _write_ml_report(report_path, ordered_paths, ml_results):
         fh.write("\n".join(lines))
 
 
+def _extract_special_dirs(classified, references, unclassified):
+    """Pull files that live in an 'updated stems' / 'ref' subfolder out of the
+    normal classification (classify_stems recurses into subfolders, so they'd
+    otherwise be built as ordinary tracks). Returns (updated_files, ref_files);
+    the classified/references/unclassified containers are edited in place."""
+    from versions import special_dir_kind
+    updated, ref_compare = [], []
+
+    def sift(lst):
+        keep = []
+        for f in lst:
+            kind = special_dir_kind(Path(f).parent.name)
+            if kind == "update":
+                updated.append(f)
+            elif kind == "ref":
+                ref_compare.append(f)
+            else:
+                keep.append(f)
+        return keep
+
+    for cat in list(classified.keys()):
+        classified[cat] = sift(classified[cat])
+        if not classified[cat]:
+            del classified[cat]
+    references[:] = sift(references)
+    unclassified[:] = sift(unclassified)
+    return updated, ref_compare
+
+
+def _match_key(path):
+    """Identity key for pairing an updated stem to the original it replaces —
+    the element key with update words (updated/revised/new/fix) also stripped."""
+    from versions import element_key
+    k = element_key(path)
+    k = re.sub(r"(?i)\b(updat\w*|revis\w*|new|replacement|corrected|amended|fixe?d?)\b", " ", k)
+    return re.sub(r"\s+", " ", k).strip() or k
+
+
 def _apply_subgroups(stems, scope):
     """Cluster each in-scope category's flat group into nested sub-groups.
 
@@ -566,6 +614,10 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     print("Classifying stems...")
     classified, references, unclassified = classify_stems(stem_folder)
+    # Pull out 'updated stems' / 'ref' subfolders BEFORE anything else (parent
+    # folder is intact here; WAV normalisation would stage them and lose it).
+    updated_files, refcompare_files = _extract_special_dirs(
+        classified, references, unclassified)
     # Names of every source stem, by stem (no extension — survives WAV
     # normalisation), so pre-seeded extras can be told apart from our own copies.
     source_names = {p.stem.lower()
@@ -578,6 +630,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     wav_staging = Path(tempfile.mkdtemp(prefix="als_wav_"))
     classified, references, unclassified = _normalize_audio_to_wav(
         classified, references, unclassified, wav_staging)
+    updated_files, _sk = _ensure_wav_paths(updated_files, wav_staging)
+    refcompare_files, _sk = _ensure_wav_paths(refcompare_files, wav_staging)
 
     # Audio-content safety net (numpy): a file filenames couldn't place
     # (music/unclassified) but that ANALYSES as a full mix / master / sub-bounce
@@ -767,6 +821,43 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         if subbed:
             print("\nSub-groups: " + ", ".join(subbed))
 
+    # --- Updated / revised stems (A/B) --------------------------------------
+    # A stem from an 'updated stems' subfolder replaces an original; keep BOTH so
+    # Sam can A/B in the arrangement. Place the updated copy right next to its
+    # original (same group/sub-group), in its own colour, MUTED (off), and OUT of
+    # the flat-ref sum (it's a duplicate element).
+    if updated_files:
+        by_key = {}
+        for idx, s in enumerate(stems):
+            by_key.setdefault(_match_key(s["file_path"]), idx)
+        matched, unmatched = [], []
+        for f in updated_files:
+            dest = audio_folder / f.name
+            if not dest.exists():
+                shutil.copy2(f, dest)
+            regions, _peak = find_audio_regions(dest, return_peak=True)
+            orig_idx = by_key.get(_match_key(f))
+            orig = stems[orig_idx] if orig_idx is not None else None
+            t = {
+                "name": ((orig["name"] if orig else f.stem) + " (updated)"),
+                "clip_name": f.stem,
+                "category": orig["category"] if orig else "music",
+                "color": UPDATED_TRACK_COLOR,
+                "file_path": dest, "rel_path": "Audio/" + f.name,
+                "regions": regions, "muted": True, "updated": True,
+            }
+            if orig:
+                for k in ("group_key", "group_name", "subgroup_key", "subgroup_name",
+                          "subgroup_color", "subgroup_muted", "subgroup_unfolded"):
+                    if orig.get(k) is not None:
+                        t[k] = orig[k]
+            print("  updated stem (A/B, muted, own colour): " + f.name
+                  + (" -> next to " + orig["name"] if orig else " (no match, appended)"))
+            (matched if orig_idx is not None else unmatched).append((orig_idx, t))
+        for orig_idx, t in sorted(matched, key=lambda x: x[0], reverse=True):
+            stems.insert(orig_idx + 1, t)
+        stems += [t for _i, t in unmatched]
+
     # --- Reference tracks at the bottom -------------------------------------
     # Always print our own flat bounce of the mix stems (a supplied "ref"/
     # "riff"/master file can't be trusted to equal the stem sum). Supplied
@@ -807,10 +898,35 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             "regions": None,
         })
 
-    print("\nBouncing flat reference (summing " + str(len(stems)) + " mix stems)...")
+    # External reference tracks (other artists' tracks from a 'ref' subfolder):
+    # laid to the RIGHT of the arrangement (after the song), routed to Ext. Out
+    # (bypasses the master), LEFT ON, own colour — so Sam can play them, then
+    # come back to his mix and judge how close it sits. Never summed.
+    refcompare_tracks = []
+    if refcompare_files:
+        max_end_sec = 0.0
+        for s in stems:
+            for (_rs, _re) in (s.get("regions") or []):
+                max_end_sec = max(max_end_sec, _re)
+        content_end = CLIP_START_BEATS + (max_end_sec / 60.0) * float(bpm)
+        right_offset = _next_phrase_boundary(content_end + 16.0)
+        for f in refcompare_files:
+            dest = audio_folder / f.name
+            if not dest.exists():
+                shutil.copy2(f, dest)
+            print("  external reference (A/B, right side, Ext. Out, on): " + f.name)
+            refcompare_tracks.append({
+                "name": f.stem, "clip_name": f.stem,
+                "category": "refcompare", "color": REFCOMPARE_COLOR,
+                "file_path": dest, "rel_path": "Audio/" + f.name,
+                "regions": None, "base_start_beat": right_offset,
+            })
+
+    mix_files = [s["file_path"] for s in stems if not s.get("updated")]
+    print("\nBouncing flat reference (summing " + str(len(mix_files)) + " mix stems)...")
     bounce_name = project_name + " FLAT REF.wav"
     bounce_path = audio_folder / bounce_name
-    summary = sum_stems_to_wav([s["file_path"] for s in stems], bounce_path)
+    summary = sum_stems_to_wav(mix_files, bounce_path)
     print("  " + str(summary["n_summed"]) + " stems summed -> " + bounce_name
           + " (peak " + ("%.2f" % summary["peak"]) + ")")
     if summary["skipped"]:
@@ -825,11 +941,14 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "regions": None,
     })
 
-    all_stems = stems + dry_tracks + ref_tracks + bus_tracks + silent_tracks
+    all_stems = (stems + dry_tracks + ref_tracks + refcompare_tracks
+                 + bus_tracks + silent_tracks)
 
     print("Classification summary:")
     cat_counts = {}
     for s in stems:
+        if s.get("updated"):
+            continue   # an updated A/B copy isn't a new element in the tally
         cat_counts[s["category"]] = cat_counts.get(s["category"], 0) + 1
     for cat in sorted(cat_counts.keys(), key=lambda c: CATEGORIES[c]["order"]):
         print("  " + cat.upper() + ": " + str(cat_counts[cat]) + " stems")
@@ -877,6 +996,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "silent": [s.get("display_name", s.get("name", "")) for s in silent_tracks],
         "references_supplied": len(references),
         "references_preseeded": len(preseeded_refs),
+        "updated_stems": [Path(f).stem for f in updated_files],
+        "refcompare": [t["name"] for t in refcompare_tracks],
         "flat_ref_peak": round(float(summary["peak"]), 3),
         "skipped": list(summary.get("skipped", [])),
         "multiversion": False,

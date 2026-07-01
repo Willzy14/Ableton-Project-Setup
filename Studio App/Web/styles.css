@@ -389,6 +389,33 @@ html, body {
   white-space: pre-wrap; max-height: 160px; margin-top: 2px; }
 .pi-trace.hidden { display: none; }
 
+/* ░░ Inline build state on a project card ░░
+   Cards go pending → building → done/warn/failed in place; the Result Card and
+   its action lights live right here in the queue, no modal jump. */
+.card.state-running { border-color: var(--stroke-cyan-2); box-shadow: 0 0 0 1px rgba(46,230,214,0.18), 0 10px 30px rgba(0,0,0,0.3); }
+.card.state-done  { border-color: rgba(55,211,153,0.45); }
+.card.state-warn  { border-color: rgba(255,184,77,0.45); }
+.card.state-failed{ border-color: rgba(255,107,107,0.45); }
+
+/* Live "building…" line shown in the fields column. */
+.card-build { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+.card-build .cb-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.card-build .cb-msg { font-family: var(--font-mono); font-size: 12px; color: var(--text-mute); }
+.card-build.fail { align-items: stretch; }
+.card-build .cb-trace { align-self: flex-start; margin-top: 2px; }
+
+/* Action lights — dim before/while building, accent .prime once done. */
+.card-side { gap: 10px; }
+.card-lights { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 128px; }
+.card-lights .btn.light { text-align: center; }
+.card-lights .btn.light:disabled {
+  opacity: 0.32; cursor: not-allowed; filter: grayscale(0.4);
+  background: rgba(255,255,255,0.03); color: var(--text-faint); border-color: rgba(255,255,255,0.07);
+}
+.card-lights .btn.light:disabled:hover { transform: none; }
+.card-lights .cb-reset { text-align: center; color: var(--text-mute); }
+.card-lights .cb-reset:hover { color: var(--text); border-color: var(--stroke-cyan); }
+
 /* ░░ Toasts (replace blocking alerts) ░░ */
 .toast-host { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; gap: 8px; align-items: center; z-index: 90; pointer-events: none; }

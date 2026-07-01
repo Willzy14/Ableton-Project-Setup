@@ -20,6 +20,23 @@ from pathlib import Path
 
 AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a"}
 
+# Subfolders that are NOT alternate versions and must not trigger a multi-version
+# build: a folder of UPDATED/revised stems (replacements to A/B against the
+# originals), or a REF folder of other artists' tracks (external references).
+# project_builder handles these specially; versions.py just skips them.
+_UPDATE_DIR_RE = re.compile(r"(?i)(updat|revis|replace|correct|amend|\bfix)")
+_REF_DIR_RE = re.compile(r"(?i)^ref(erence)?s?\b")
+
+
+def special_dir_kind(dirname):
+    """'update', 'ref', or None — classify a subfolder that isn't a version."""
+    name = str(dirname)
+    if _UPDATE_DIR_RE.search(name):
+        return "update"
+    if _REF_DIR_RE.search(name):
+        return "ref"
+    return None
+
 # Tokens that mark an alternate VERSION rather than a different element — a
 # session/version code (Sam's "S16"/"S17"), or an arrangement keyword. Stripping
 # these lets the same element pair across versions (kick-on-kick), and is what
@@ -169,6 +186,10 @@ def detect_versions(stem_folder, mirror_threshold=0.5):
     top = _audio_in(folder)
     subdirs = [d for d in sorted(folder.iterdir())
                if d.is_dir() and _audio_in(d)]
+    # 'updated stems' / 'ref' subfolders are NOT versions — drop them from
+    # version detection (project_builder handles them). This stops a small
+    # folder of revised stems being mis-read as a second project.
+    subdirs = [d for d in subdirs if not special_dir_kind(d.name)]
 
     if not top:
         # No top-level baseline: versions may live entirely in subfolders.
