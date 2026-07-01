@@ -36,7 +36,26 @@ html, body {
   overflow: hidden;
 }
 
-.app { display: flex; flex-direction: column; height: 100vh; padding: 22px 26px 18px; gap: 18px; }
+.app { position: relative; z-index: 0; display: flex; flex-direction: column; height: 100vh; padding: 22px 26px 18px; gap: 18px; }
+
+/* ░░ Subtle studio-photo backdrop ░░
+   The Wired Masters studio photo as an atmospheric texture only. A near-opaque
+   dark scrim sits on top so the #0E0F13 theme dominates and every control stays
+   crisp — the photo reads at ~10% through the gradient. */
+.app::before {
+  content: "";
+  position: fixed; inset: 0; z-index: -1;
+  background: url("assets/studio_bg.jpg") center 30% / cover no-repeat;
+  opacity: 0.10;
+  filter: grayscale(0.3) brightness(0.85);
+  pointer-events: none;
+}
+.app::after {
+  content: "";
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(14,15,19,0.82) 0%, rgba(14,15,19,0.9) 55%, rgba(14,15,19,0.97) 100%);
+}
 
 /* ░░ Top bar ░░ */
 .topbar {
@@ -47,17 +66,19 @@ html, body {
   border-radius: var(--radius);
   backdrop-filter: blur(8px);
 }
-.brand { display: flex; align-items: center; gap: 13px; }
+.brand { display: flex; align-items: center; gap: 14px; }
 .brand-mark {
-  width: 40px; height: 40px; border-radius: 12px;
-  display: grid; place-items: center;
-  font-size: 22px; color: #0c0c10;
-  background: var(--accent-grad);
-  box-shadow: 0 6px 22px rgba(139,123,255,0.35);
+  width: 38px; height: 38px; flex: 0 0 auto;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 14px rgba(0,0,0,0.4));
 }
-.brand-title { font-size: 17px; font-weight: 700; letter-spacing: 0.2px; }
-.brand-title span { color: var(--accent-2); margin: 0 2px; }
-.brand-sub { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 1.5px; }
+.brand-text { display: flex; flex-direction: column; gap: 5px; }
+.brand-wordmark {
+  height: 20px; width: auto; display: block;
+  opacity: 0.96;
+}
+.brand-sub { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 1.4px; }
+.brand-sub span { color: var(--text-dim); }
 
 .topbar-controls { display: flex; align-items: center; gap: 16px; margin-left: auto; flex: 1; justify-content: flex-end; }
 .field { display: flex; flex-direction: column; gap: 5px; }

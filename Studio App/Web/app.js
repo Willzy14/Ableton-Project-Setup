@@ -256,22 +256,67 @@ async function choosePaths(id) {
   renderQueue();
 }
 
+/* OS drag-drop.
+   Real filesystem paths are delivered by the Python side (see app.py
+   _wire_native_drop): a document-level pywebview drop handler reads each file's
+   pywebviewFullPath and calls window.__wmReceiveDrop(paths). Because that fires
+   on `document`, we track which card the pointer is over so the paths land on
+   the right one. The JS `drop` listener here is kept only for the visual
+   highlight and as a fallback for backends that expose File.path directly (or
+   the plain-browser preview, where we fall back to the picker). */
+let __wmActiveDropCard = null;
+
 function wireDrop(dz, id) {
-  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag"); });
-  dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+  dz.addEventListener("dragenter", (e) => { e.preventDefault(); __wmActiveDropCard = id; dz.classList.add("drag"); });
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); __wmActiveDropCard = id; dz.classList.add("drag"); });
+  dz.addEventListener("dragleave", (e) => {
+    // Only clear when actually leaving the dropzone (not entering a child).
+    if (!dz.contains(e.relatedTarget)) dz.classList.remove("drag");
+  });
   dz.addEventListener("drop", (e) => {
     e.preventDefault();
     dz.classList.remove("drag");
-    const proj = State.projects.find((p) => p.id === id);
-    // Some webview backends expose a real path on dropped File objects.
+    __wmActiveDropCard = id;
+    // If the OS exposed real paths on the File objects, use them directly.
+    // (WebView2/Chromium blanks File.path, so this is usually empty and the
+    // Python bridge — __wmReceiveDrop — does the real work instead.)
     const paths = [];
     for (const f of e.dataTransfer.files) {
       if (f.path) paths.push(f.path);
     }
-    if (paths.length) { proj.paths = paths; renderQueue(); }
-    else { choosePaths(id); } // no real paths from the OS drag — open picker
+    if (paths.length) {
+      applyDroppedPaths(id, paths);
+    } else if (!api()) {
+      // Plain-browser preview with no native bridge — fall back to the picker.
+      choosePaths(id);
+    }
+    // Otherwise: running in the app window — the Python drop handler will call
+    // window.__wmReceiveDrop() with the real paths in a moment.
   });
 }
+
+/* Assign dropped paths to a project card via the same model the picker uses. */
+function applyDroppedPaths(id, paths) {
+  const proj = State.projects.find((p) => p.id === id);
+  if (!proj || !paths || !paths.length) return;
+  proj.paths = paths;
+  clearDragHighlights();
+  renderQueue();
+}
+
+function clearDragHighlights() {
+  document.querySelectorAll(".dropzone.drag").forEach((el) => el.classList.remove("drag"));
+}
+
+/* Called from Python (app.py) with the real OS paths of dropped files/folders.
+   Routes them to whichever card the pointer was last over. */
+window.__wmReceiveDrop = function (paths) {
+  const id = __wmActiveDropCard;
+  clearDragHighlights();
+  if (id == null) return;
+  applyDroppedPaths(id, Array.isArray(paths) ? paths : [paths]);
+  __wmActiveDropCard = null;
+};
 
 function updateSummary() {
   const ready = State.projects.filter((p) => p.paths.length && p.title.trim());
