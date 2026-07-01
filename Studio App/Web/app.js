@@ -47,6 +47,7 @@ async function init() {
   const vb = $("versionBadge"); if (vb) vb.textContent = "v" + (State.version || "—");
   hydrateTopbar();
   hydrateSubgroups();
+  renderPreview();
   if (State.projects.length === 0) addProject();
   wireGlobalButtons();
 }
@@ -86,8 +87,64 @@ async function persistSubgroups() {
     .filter(([, id]) => $(id) && $(id).checked)
     .map(([cat]) => cat);
   State.settings.subgroups = enabled;
+  renderPreview();
   const a = api();
   if (a) await a.set_setting("subgroups", enabled);
+}
+
+/* ---- session preview (decorative colour-language legend) ----
+   A tasteful static showcase of the session the app builds: colour-coded lanes
+   with tiny faux-waveforms, groups + nested sub-groups. Reacts to the Vox/Drums/
+   Music sub-group toggles so the tree visibly changes. No backend — pure legend. */
+const PREVIEW_LANES = [
+  { name: "Kick",     color: "var(--cat-drums)",  seed: 7  },
+  { name: "Drums",    color: "var(--cat-drums)",  seed: 3,  grp: "GRP", cat: "drums",
+    subs: [ { name: "Kit",  seed: 11 }, { name: "Perc", seed: 5 } ] },
+  { name: "Bass",     color: "var(--cat-bass)",   seed: 9  },
+  { name: "Music",    color: "var(--cat-music)",  seed: 4,  grp: "GRP", cat: "music",
+    subs: [ { name: "Synth", seed: 6 }, { name: "Keys", seed: 13 } ] },
+  { name: "Vox",      color: "var(--cat-vocals)", seed: 8,  grp: "GRP", cat: "vocals",
+    subs: [ { name: "Lauren", seed: 2 }, { name: "Sarah", seed: 15 } ] },
+  { name: "FX",       color: "var(--cat-fx)",     seed: 12 },
+  { name: "Flat Ref", color: "var(--cat-ref)",    seed: 10 },
+];
+
+/* Deterministic faux-waveform bars (stable per lane, no RNG churn on re-render). */
+function waveBars(seed, count) {
+  let out = "";
+  let x = (seed * 9301 + 49297) % 233280;
+  for (let i = 0; i < count; i++) {
+    x = (x * 9301 + 49297) % 233280;
+    const h = 3 + Math.round((x / 233280) * 15); // 3..18px
+    out += `<i style="height:${h}px"></i>`;
+  }
+  return out;
+}
+
+function laneEl({ name, color, seed, grp, arrow }) {
+  const el = document.createElement("div");
+  el.className = "lane" + (arrow ? " sub" : "");
+  el.style.color = color;
+  el.innerHTML =
+    `<span class="tag" style="background:${color}"></span>` +
+    `<span class="lane-name">${arrow ? '<span class="arrow">↳</span>' : ""}${escapeHtml(name)}</span>` +
+    (grp ? `<span class="grp">${grp}</span>` : "") +
+    `<span class="wave">${waveBars(seed, 26)}</span>`;
+  return el;
+}
+
+function renderPreview() {
+  const host = $("previewLanes");
+  if (!host) return;
+  host.innerHTML = "";
+  const enabled = State.settings.subgroups || [];
+  PREVIEW_LANES.forEach((lane) => {
+    host.appendChild(laneEl(lane));
+    if (lane.subs && lane.cat && enabled.includes(lane.cat)) {
+      lane.subs.forEach((s) =>
+        host.appendChild(laneEl({ name: s.name, color: lane.color, seed: s.seed, arrow: true })));
+    }
+  });
 }
 
 function wireGlobalButtons() {

@@ -13,8 +13,8 @@
       <div class="brand">
         <img class="brand-mark" src="assets/wm_logo.png" alt="Wired Masters" />
         <div class="brand-text">
-          <img class="brand-wordmark" src="assets/wm_text_logo.png" alt="Wired Masters" />
-          <div class="brand-sub">Stem&#8202;→&#8202;Ableton · studio project setup · <span id="versionBadge">v—</span></div>
+          <div class="brand-title">Stem<span>→</span>Ableton</div>
+          <div class="brand-sub">studio project setup · <span id="versionBadge">v—</span></div>
         </div>
       </div>
 
@@ -43,19 +43,34 @@
       </div>
     </header>
 
-    <!-- ░░ Project queue ░░ -->
-    <main class="queue-wrap">
-      <div id="queue" class="queue"></div>
-      <button id="addProjectBtn" class="add-project">
-        <span class="plus">+</span> Add another project
-      </button>
+    <!-- ░░ Stage: project queue (left) + session preview (right) ░░ -->
+    <main class="stage">
+      <div class="queue-wrap">
+        <div id="queue" class="queue"></div>
+        <button id="addProjectBtn" class="add-project">
+          <span class="plus">+</span> Add another project
+        </button>
+      </div>
+
+      <!-- Session preview — colour-coded legend of what the app builds. -->
+      <aside class="preview">
+        <div class="preview-head">
+          <span class="lab">Session preview</span>
+          <span class="preview-pill">colour language</span>
+        </div>
+        <div id="previewLanes" class="preview-lanes"></div>
+        <div class="preview-legend">
+          Live groups &amp; nested sub-groups, clip-coloured per category.
+          Toggle sub-groups above to see the tree change.
+        </div>
+      </aside>
     </main>
 
     <!-- ░░ Action bar ░░ -->
     <footer class="actionbar">
       <div id="summary" class="summary">No projects queued</div>
       <button id="goBtn" class="btn go" disabled>
-        Build all <span class="go-sub">— go make a cup of tea ☕</span>
+        <span class="eq-motif" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Build all <span class="go-sub">— go make a cup of tea ☕</span>
       </button>
     </footer>
   </div>
