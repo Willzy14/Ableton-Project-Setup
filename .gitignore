@@ -3,6 +3,10 @@ Test Output/
 Test Builds */
 Demo Output/
 
+# Built project folders — the default output base is the repo root, so builds
+# land here as "Artist - Title [Label] Project". Never commit generated output.
+*] Project/
+
 # Ableton sidecar files
 *.asd
 

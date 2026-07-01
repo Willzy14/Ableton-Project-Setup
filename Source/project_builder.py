@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from stem_classifier import (classify_stems, classify_stem, apply_track_names,
-                             find_dry_stems, CATEGORIES)
+                             find_dry_stems, CATEGORIES, AUDIO_EXTENSIONS)
 from als_patcher import (patch_project, find_audio_regions, CLIP_START_BEATS,
                          SILENCE_FLOOR_DB)
 from bpm_detector import detect_bpm
@@ -168,6 +168,28 @@ def _normalize_audio_to_wav(classified, references, unclassified, staging_dir):
         for pth, why in skipped:
             print("  " + Path(pth).name + " — " + why)
     return classified, references, unclassified
+
+
+def _find_preseeded_audio(project_folder, audio_folder):
+    """Audio files the user pre-seeded into the target project folder.
+
+    Sam sometimes drops his current master into the target ``Audio/`` (or the
+    project root) so he can A/B the new mix against it. The builder classifies
+    the *source* stems folder, not the target, so such a file would be copied
+    around but left unreferenced in the .als. This captures those files up front
+    (before we copy any source stems in) so they can be wired in as red
+    reference match tracks at the bottom. Top-level only (never MASTER RENDERS).
+    """
+    found, seen = [], set()
+    for d in (audio_folder, project_folder):
+        if not d.exists():
+            continue
+        for f in sorted(d.iterdir()):
+            if (f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+                    and f.name not in seen):
+                seen.add(f.name)
+                found.append(f)
+    return found
 
 
 def detect_project_bpm(classified):
@@ -441,6 +463,12 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     info_folder = project_folder / "Ableton Project Info"
     master_folder = project_folder / "MASTER RENDERS"
 
+    # Capture anything the user pre-seeded into the target folder BEFORE we copy
+    # source stems in, so a supplied master (dropped in to A/B against) is wired
+    # in as a red reference rather than left orphaned. Filtered against the
+    # source stems below so our own copies/bounce aren't re-added.
+    preseeded = _find_preseeded_audio(project_folder, audio_folder)
+
     project_folder.mkdir(parents=True, exist_ok=True)
     audio_folder.mkdir(exist_ok=True)
     info_folder.mkdir(exist_ok=True)
@@ -448,6 +476,11 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     print("Classifying stems...")
     classified, references, unclassified = classify_stems(stem_folder)
+    # Names of every source stem, by stem (no extension — survives WAV
+    # normalisation), so pre-seeded extras can be told apart from our own copies.
+    source_names = {p.stem.lower()
+                    for lst in (references, unclassified, *classified.values())
+                    for p in lst}
 
     # Normalise non-WAV audio (AIFF/MP3/FLAC dropped in with the stems) to WAV
     # up front, so every downstream reader (regions, BPM, bounce, analysis) only
@@ -661,6 +694,26 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             "regions": None,
         })
 
+    # Wire in any master/reference the user pre-seeded into the target folder
+    # (not one of our source stems, not our own flat bounce) as a red match track.
+    preseeded_refs = [f for f in preseeded
+                      if f.stem.lower() not in source_names
+                      and "FLAT REF" not in f.name.upper()]
+    for f in preseeded_refs:
+        dest = audio_folder / f.name
+        if f.parent != audio_folder and not dest.exists():
+            shutil.copy2(f, dest)
+        print("  wiring in pre-seeded reference: " + f.name)
+        ref_tracks.append({
+            "name": f.stem,
+            "clip_name": f.stem,
+            "category": "reference",
+            "color": REF_TRACK_COLOR,
+            "file_path": dest,
+            "rel_path": "Audio/" + f.name,
+            "regions": None,
+        })
+
     print("\nBouncing flat reference (summing " + str(len(stems)) + " mix stems)...")
     bounce_name = project_name + " FLAT REF.wav"
     bounce_path = audio_folder / bounce_name
@@ -690,7 +743,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     if dry_tracks:
         print("  DRY (parked, muted group): " + str(len(dry_tracks)) + " stems")
     print("  REF TRACKS: " + str(len(ref_tracks)) + " (flat bounce + "
-          + str(len(references)) + " supplied)")
+          + str(len(references)) + " supplied + "
+          + str(len(preseeded_refs)) + " pre-seeded)")
     if silent_tracks:
         print("  SILENT (empty, bottom, own colour): " + str(len(silent_tracks)) + " stems")
     if bus_tracks:
