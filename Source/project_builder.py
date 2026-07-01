@@ -53,7 +53,11 @@ DRY_GROUP_COLOR = 37
 # bottom with its own colour so it's obviously a dead export. 12 = a distinct
 # tone; change the index if you'd prefer another (palette is 0-69).
 SILENT_TRACK_COLOR = 12
-DEFAULT_OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\0.1---GIT HUB---\Ableton Project Setup")
+# Where built projects land by default. Sam's in-progress stem mixes live here,
+# so a freshly set-up project belongs alongside them — and this keeps generated
+# output OUT of the code repo (an env/config override still wins). CLI only; the
+# Studio App uses its own configured output folder.
+DEFAULT_OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\2. Ongoing Stem Mixes")
 
 # Backwards-compatible names for older scripts importing these constants.
 TEMPLATE_PATH = DEFAULT_TEMPLATE_PATH
@@ -112,6 +116,26 @@ def get_enable_ml_classifier():
     if env_value is not None:
         return env_value.strip().lower() not in {"0", "false", "no", "off"}
     return bool(_load_project_config().get("enable_ml_classifier", True))
+
+
+def get_ml_timeout_sec(n_stems):
+    """Wall-clock budget for the ML subprocess, scaled by stem count.
+
+    Demucs on CPU is genuinely slow (tens of seconds per stem), and a big pack
+    like Moby had 47 unknowns — so the budget is generous per stem so a real run
+    is never killed mid-flight, but bounded so a hung/wedged subprocess can't
+    stall the whole build forever. `ML_TIMEOUT_SEC` (env) forces a fixed total.
+    """
+    env_value = os.environ.get("ML_TIMEOUT_SEC")
+    if env_value:
+        try:
+            return max(1.0, float(env_value))
+        except ValueError:
+            pass
+    cfg = _load_project_config()
+    per = float(cfg.get("ml_timeout_per_stem_sec", 240))
+    base = float(cfg.get("ml_timeout_base_sec", 180))
+    return base + per * max(1, int(n_stems))
 
 
 def _ensure_wav_paths(paths, staging_dir):
@@ -316,7 +340,7 @@ def _next_phrase_boundary(beat, phrase_bars=32):
     return math.ceil(beat / phrase_beats) * phrase_beats
 
 
-def _ml_classify_unknowns(paths, use_whisper=True, python_exe=None):
+def _ml_classify_unknowns(paths, use_whisper=True, python_exe=None, timeout=None):
     """Classify filename-unknown stems by audio content (Demucs + Whisper).
 
     Runs Source/audio_ml_classify.py as a subprocess (separate CUDA context,
@@ -327,23 +351,34 @@ def _ml_classify_unknowns(paths, use_whisper=True, python_exe=None):
         return {}
     python_exe = python_exe or get_ml_python_exe() or sys.executable
     work = Path(tempfile.mkdtemp(prefix="als_ml_"))
-    in_json = work / "in.json"
-    out_json = work / "out.json"
-    with open(in_json, "w", encoding="utf-8") as fh:
-        json.dump([str(p) for p in paths], fh)
-    cmd = [python_exe, str(ML_SCRIPT), "--in", str(in_json), "--out", str(out_json)]
-    if not use_whisper:
-        cmd.append("--no-whisper")
-    env = dict(os.environ)
-    env["PYTHON_JIT"] = "0"
     try:
-        subprocess.run(cmd, env=env, check=True)
-        with open(out_json, "r", encoding="utf-8") as fh:
-            raw = json.load(fh)
-    except Exception as e:  # noqa: BLE001 — ML is best-effort; never abort the build
-        print("  ML classification unavailable (" + repr(e) + "); unknowns -> music")
-        return {}
-    return {p: raw[str(p)] for p in paths if str(p) in raw}
+        in_json = work / "in.json"
+        out_json = work / "out.json"
+        with open(in_json, "w", encoding="utf-8") as fh:
+            json.dump([str(p) for p in paths], fh)
+        cmd = [python_exe, str(ML_SCRIPT), "--in", str(in_json), "--out", str(out_json)]
+        if not use_whisper:
+            cmd.append("--no-whisper")
+        env = dict(os.environ)
+        env["PYTHON_JIT"] = "0"
+        if timeout is None:
+            timeout = get_ml_timeout_sec(len(paths))
+        try:
+            subprocess.run(cmd, env=env, check=True, timeout=timeout)
+            with open(out_json, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except subprocess.TimeoutExpired:
+            # A hung/wedged Demucs must never stall the build — fall back to music.
+            print("  ML classification timed out after %ds; unknowns -> music"
+                  % int(timeout))
+            return {}
+        except Exception as e:  # noqa: BLE001 — ML is best-effort; never abort the build
+            print("  ML classification unavailable (" + repr(e) + "); unknowns -> music")
+            return {}
+        return {p: raw[str(p)] for p in paths if str(p) in raw}
+    finally:
+        # Always clean up the temp scratch dir (was leaking one per build).
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def _write_ml_report(report_path, ordered_paths, ml_results):
@@ -454,6 +489,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         return build_multiversion_project(
             versions, artist, title, label, bpm, output_base, use_ml=use_ml,
             category_colors=category_colors,
+            subgroup_categories=subgroup_categories,
         )
 
     if project_name is None:
@@ -851,7 +887,8 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
 
 
 def build_multiversion_project(versions, artist, title, label, bpm, output_base,
-                               use_ml=True, category_colors=None):
+                               use_ml=True, category_colors=None,
+                               subgroup_categories=None):
     """Build a project from multiple versions (extended / radio edit / dub ...).
 
     Each element shares ONE track across versions; versions are laid out as
@@ -861,6 +898,10 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     project_name = artist + " - " + title + " [" + label + "]"
     project_folder = Path(output_base) / (project_name + " Project")
     audio_folder = project_folder / "Audio"
+    # Capture any pre-seeded master/reference in the target folder BEFORE copying
+    # source stems in (same as the single-version path), so it's wired in below.
+    preseeded = _find_preseeded_audio(project_folder, audio_folder)
+    source_names = {Path(f).stem.lower() for v in versions for f in v["files"]}
     for sub in ("Audio", "Ableton Project Info", "MASTER RENDERS"):
         (project_folder / sub).mkdir(parents=True, exist_ok=True)
 
@@ -968,6 +1009,14 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         all_stems.append(track)
         track_by_elem[s["element_key"]] = track
 
+    # Nested sub-groups on the primary (shared) tracks — later-version clips ride
+    # the same tracks, so tagging the primary layer sub-groups every version.
+    # _apply_subgroups only reorders (same track objects), so track_by_elem below
+    # still resolves for stacking the later versions' clips.
+    scope = SUBGROUP_CATEGORIES if subgroup_categories is None else tuple(subgroup_categories)
+    if scope:
+        all_stems = _apply_subgroups(all_stems, scope)
+
     extra_only = []
     for k in range(1, len(pv)):
         for s in pv[k]["mix"]:
@@ -1025,6 +1074,22 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
 
     all_stems += _shared(lambda p: p["refs"], "reference", REF_TRACK_COLOR)
     all_stems += _shared(lambda p: p["buses"], "bus", BUS_TRACK_COLOR)
+
+    # Wire in any master/reference the user pre-seeded into the target folder as
+    # a red match track (single clip — a pre-seeded master isn't per-version).
+    preseeded_refs = [f for f in preseeded
+                      if f.stem.lower() not in source_names
+                      and "FLAT REF" not in f.name.upper()]
+    for f in preseeded_refs:
+        dest = audio_folder / f.name
+        if f.parent != audio_folder and not dest.exists():
+            shutil.copy2(f, dest)
+        print("  wiring in pre-seeded reference: " + f.name)
+        all_stems.append({"name": f.stem, "clip_name": f.stem,
+                          "category": "reference", "color": REF_TRACK_COLOR,
+                          "file_path": dest, "rel_path": "Audio/" + f.name,
+                          "regions": None, "base_start_beat": offsets[0],
+                          "extra_clips": []})
 
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template (" + str(len(all_stems)) + " tracks)...")

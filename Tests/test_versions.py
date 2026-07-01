@@ -70,6 +70,38 @@ def test_extended_chosen_over_radio_regardless_of_order():
     assert "Extended" in v[0]["name"]
 
 
+def test_nametoken_versions_one_flat_folder():
+    # Get Right shape: one flat folder, versions told apart by a name token.
+    root = _pack({"": [
+        "01_Kick S16.wav", "02_Bass S16.wav", "03_Vox S16.wav", "04_Synth S16.wav",
+        "01_Kick S17 SHRT EDIT.wav", "02_Bass S17 SHRT EDIT.wav",
+        "03_Vox S17 SHRT EDIT.wav", "04_Synth S17 SHRT EDIT.wav",
+    ]})
+    v = detect_versions(root)
+    assert v is not None and len(v) == 2, v
+    assert v[0]["name"] == "S16"                    # fuller arrangement is primary
+    assert "S17" in v[1]["name"]
+    assert len(v[0]["files"]) == 4 and len(v[1]["files"]) == 4
+
+
+def test_normal_flat_pack_is_not_nametoken_versions():
+    root = _pack({"": [
+        "01_Kick.wav", "02_Bass.wav", "03_Vox.wav",
+        "04_Synth.wav", "05_Clap.wav", "06_Hat.wav",
+    ]})
+    assert detect_versions(root) is None
+
+
+def test_incidental_token_does_not_split():
+    # 8 real stems + a couple of "dub"/"edit"-named FX must NOT be mis-split.
+    root = _pack({"": [
+        "01_Kick.wav", "02_Bass.wav", "03_Vox.wav", "04_Synth.wav",
+        "05_Clap.wav", "06_Hat.wav", "07_Perc.wav", "08_Lead.wav",
+        "09_Reverb Dub.wav", "10_Guitar Edit.wav",
+    ]})
+    assert detect_versions(root) is None
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items())

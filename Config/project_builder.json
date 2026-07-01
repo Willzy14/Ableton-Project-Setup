@@ -1,6 +1,8 @@
 {
   "template_path": "C:\\Users\\Carillon\\Documents\\Ableton\\User Library\\Templates\\Ableton Project Set Up 250 Tracks.als",
-  "output_base": "C:\\Users\\Carillon\\Wired Masters Dropbox\\Sam Wills\\0.1---GIT HUB---\\Ableton Project Setup",
+  "output_base": "C:\\Users\\Carillon\\Wired Masters Dropbox\\Sam Wills\\2. Ongoing Stem Mixes",
   "python_ml_exe": "",
-  "enable_ml_classifier": true
+  "enable_ml_classifier": true,
+  "ml_timeout_per_stem_sec": 240,
+  "ml_timeout_base_sec": 180
 }
