@@ -1102,14 +1102,19 @@ def set_global_tempo(lines, bpm):
 
 
 def insert_locators(lines, locators):
-    """Fill the arrangement Locators (markers). locators = [(time_beat, name)].
+    """Fill the arrangement Locators (markers).
 
-    Replaces the empty <Locators /> with named locator entries.
+    locators = [(time_beat, name)] or [(time_beat, name, key)] — when a `key`
+    string is given (e.g. "1".."9"/"0"), the locator is computer-key mapped so
+    that key jumps playback straight to it (Ableton stores this inline as a
+    <Mapping><PersistentKeyString> block). Replaces the empty <Locators />.
     """
     if not locators:
         return
     block = []
-    for time_beat, name in locators:
+    for entry in locators:
+        time_beat, name = entry[0], entry[1]
+        key = entry[2] if len(entry) > 2 else None
         lid = _alloc_id()
         tval = ("%d" % round(time_beat)) if abs(time_beat - round(time_beat)) < 1e-6 else ("%.6f" % time_beat)
         block.extend([
@@ -1118,6 +1123,20 @@ def insert_locators(lines, locators):
             '\t\t\t\t\t<Time Value="' + tval + '" />' + CRLF,
             '\t\t\t\t\t<Name Value="' + _xml_escape(name) + '" />' + CRLF,
             '\t\t\t\t\t<Annotation Value="" />' + CRLF,
+        ])
+        if key:
+            block.extend([
+                '\t\t\t\t\t<Mapping>' + CRLF,
+                '\t\t\t\t\t\t<PersistentKeyString Value="' + _xml_escape(str(key)) + '" />' + CRLF,
+                '\t\t\t\t\t\t<IsNote Value="false" />' + CRLF,
+                '\t\t\t\t\t\t<Channel Value="-1" />' + CRLF,
+                '\t\t\t\t\t\t<NoteOrController Value="-1" />' + CRLF,
+                '\t\t\t\t\t\t<LowerRangeNote Value="-1" />' + CRLF,
+                '\t\t\t\t\t\t<UpperRangeNote Value="-1" />' + CRLF,
+                '\t\t\t\t\t\t<ControllerMapMode Value="0" />' + CRLF,
+                '\t\t\t\t\t</Mapping>' + CRLF,
+            ])
+        block.extend([
             '\t\t\t\t\t<IsSongStart Value="false" />' + CRLF,
             '\t\t\t\t</Locator>' + CRLF,
         ])

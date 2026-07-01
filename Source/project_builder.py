@@ -984,8 +984,10 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             n_frames, sr_hz, _ = get_wav_info(dest)
             dur_beats = (n_frames / float(sr_hz) / 60.0) * float(bpm) if sr_hz else 8.0
             energetic_sec = _find_energetic_point(dest)
+            # Key-map: 1..9 then 0 for a 10th; more refs than that get no key.
+            key = str(i + 1) if i < 9 else ("0" if i == 9 else None)
             ref_locators.append((cursor + (energetic_sec / 60.0) * float(bpm),
-                                 str(i + 1) + " · " + f.stem[:28]))
+                                 (key + " · " if key else "") + f.stem[:28], key))
             clips.append({"file_path": dest, "rel_path": "Audio/" + f.name,
                           "regions": None, "start_beat": cursor, "clip_name": f.stem})
             print("  ref " + str(i + 1) + " (one track, Ext. Out, on): " + f.name

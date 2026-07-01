@@ -82,9 +82,13 @@ def test_end_to_end_special_folders():
     assert UPDATED_TRACK_COLOR in colors, "no updated-stem track (colour missing)"
     # All refs on ONE 'References' track (colour REFCOMPARE_COLOR), not one each.
     assert colors.count(REFCOMPARE_COLOR) == 1, "refs should be on a single track"
-    # A numbered locator on the energetic part of each ref (2 refs -> 2 locators).
+    # A numbered locator on the energetic part of each ref (2 refs -> 2 locators),
+    # each key-mapped (keys 1, 2) so pressing the key jumps to that ref's drop.
     n_locators = sum(1 for ln in lines if "<Locator Id=" in ln)
     assert n_locators == 2, "expected one locator per ref, got " + str(n_locators)
+    keys = [re.search(r'<PersistentKeyString Value="([^"]*)"', ln).group(1)
+            for ln in lines if "PersistentKeyString" in ln]
+    assert keys == ["1", "2"], "ref locators not key-mapped 1..N: " + str(keys)
 
     rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
     assert sorted(rep["updated_stems"]) == ["Sample Bass", "Sub Bass"], rep["updated_stems"]
