@@ -405,6 +405,28 @@ def _build_groups_report(stems):
     return [{"name": g, "subgroups": subs} for g, subs in groups.items()]
 
 
+def _collect_flags(unmatched_updated, skipped, bpm_meta, bpm, silent_tracks):
+    """Human-readable 'needs a look' notes for the UI — build decisions Sam
+    should review BEFORE opening the project (not silent guesses)."""
+    flags = []
+    if unmatched_updated:
+        flags.append("Updated stem(s) had no matching original — parked muted at the "
+                     "bottom for you to position: " + ", ".join(unmatched_updated))
+    if skipped:
+        flags.append("Left OUT of the build (unreadable / sample-rate mismatch): "
+                     + ", ".join(skipped))
+    if bpm_meta:
+        res = bpm_meta.get("residual_ms")
+        if res is None or res > 5.0:
+            flags.append("Auto-BPM " + str(int(float(bpm))) + " is low-confidence"
+                         + ((" (±" + str(res) + "ms)") if res is not None else "")
+                         + " — verify the tempo.")
+    if silent_tracks:
+        flags.append(str(len(silent_tracks)) + " empty / dead stem(s) parked at the bottom "
+                     "— check they weren't meant to have audio.")
+    return flags
+
+
 def _write_session_report(project_folder, report):
     """Write the machine-readable Session Report.json (the Studio App reads it to
     show a build Result Card) plus a short human-readable Session Report.txt."""
@@ -833,6 +855,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     # Sam can A/B in the arrangement. Place the updated copy right next to its
     # original (same group/sub-group), in its own colour, MUTED (off), and OUT of
     # the flat-ref sum (it's a duplicate element).
+    unmatched_updated = []
     if updated_files:
         by_key = {}
         for idx, s in enumerate(stems):
@@ -864,6 +887,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         for orig_idx, t in sorted(matched, key=lambda x: x[0], reverse=True):
             stems.insert(orig_idx + 1, t)
         stems += [t for _i, t in unmatched]
+        unmatched_updated = [t["clip_name"] for _i, t in unmatched]
 
     # --- Reference tracks at the bottom -------------------------------------
     # Always print our own flat bounce of the mix stems (a supplied "ref"/
@@ -1007,6 +1031,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "refcompare": [t["name"] for t in refcompare_tracks],
         "flat_ref_peak": round(float(summary["peak"]), 3),
         "skipped": list(summary.get("skipped", [])),
+        "flags": _collect_flags(unmatched_updated, summary.get("skipped", []),
+                                bpm_meta, bpm, silent_tracks),
         "multiversion": False,
     }
     _write_session_report(project_folder, report)
@@ -1325,6 +1351,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "references_preseeded": len(preseeded_refs),
         "flat_ref_peak": None,
         "skipped": [],
+        "flags": [],
         "multiversion": True,
         "versions": [p["name"] for p in pv],
     }

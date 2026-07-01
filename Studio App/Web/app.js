@@ -703,7 +703,15 @@ function resultBody(r) {
   if (r.silent && r.silent.length) pills.push(`<span class="rc-pill amber">${r.silent.length} silent</span>`);
   if (r.skipped && r.skipped.length) pills.push(`<span class="rc-pill amber">${r.skipped.length} skipped</span>`);
   if (r.flat_ref_peak != null) pills.push(`<span class="rc-pill">ref peak ${r.flat_ref_peak}</span>`);
-  return `<div class="rc">
+  const flags = r.flags || [];
+  const flagsBlock = flags.length
+    ? `<div class="rc-flags">
+         <div class="rc-flags-head"><span class="rc-flags-icon">!</span> Needs a look before you open it</div>
+         ${flags.map((f) => `<div class="rc-flag">${escapeHtml(f)}</div>`).join("")}
+       </div>`
+    : "";
+  return `<div class="rc${flags.length ? " has-flags" : ""}">
+     ${flagsBlock}
      <div class="rc-pills">${pills.join("")}</div>
      <div class="rc-cats">${catRow}</div>
      ${groups ? `<div class="rc-groups"><span class="rc-lab">Groups</span> ${groups}</div>` : ""}
