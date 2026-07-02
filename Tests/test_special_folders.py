@@ -96,6 +96,32 @@ def test_end_to_end_special_folders():
     assert rep["multiversion"] is False
 
 
+def test_multiversion_pack_keeps_ref_folder():
+    # A multi-version pack (Extended/Radio subfolders) that ALSO has a REF folder
+    # must NOT drop the refs — they get wired onto a References track, key-mapped.
+    if not Path(get_template_path()).exists():
+        print("SKIP test_multiversion_pack_keeps_ref_folder (template not on this machine)")
+        return
+    tmp = Path(tempfile.mkdtemp(prefix="mvref_"))
+    src = tmp / "pack"
+    for tok in ("Extended", "Radio"):
+        for nm, f in [("01_Kick", 60), ("02_Bass", 90), ("03_Synth", 440)]:
+            _tone(src / (tok + " Group Stems") / (nm + ".wav"), f)
+    _tone(src / "REF" / "Other Artist A.wav", 200)
+    _tone(src / "REF" / "Other Artist B.wav", 260)
+
+    proj = build_project(src, "MV", "RefKeep", "Lab", bpm=124,
+                         output_base=tmp / "out", use_ml=False,
+                         project_name="MV - RefKeep [Lab]")
+    rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
+    assert rep["multiversion"] is True
+    assert len(rep["refcompare"]) == 2, rep["refcompare"]
+    lines = decompress_als(next(Path(proj).glob("*.als")))
+    keys = [re.search(r'<PersistentKeyString Value="([^"]*)"', ln).group(1)
+            for ln in lines if "PersistentKeyString" in ln]
+    assert keys == ["1", "2"], keys
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items())

@@ -455,6 +455,41 @@ def _find_energetic_point(path, win_sec=2.0, intro_skip_sec=8.0, smooth_sec=8.0)
     return float(int(np.argmax(sm)) * win_sec)
 
 
+def _make_refcompare_track(refcompare_files, audio_folder, start_beat, bpm):
+    """Build the single 'References' track — other artists' tracks laid out one
+    after another from `start_beat` (to the RIGHT of the song), Ext. Out, left
+    on, own colour, with a numbered key-mapped locator on the energetic part of
+    each. Returns (tracks, locators): tracks is [] or a one-track list. Shared by
+    the single- and multi-version build paths."""
+    if not refcompare_files:
+        return [], []
+    locators = []
+    cursor = _next_phrase_boundary(start_beat + 16.0)
+    clips = []
+    for i, f in enumerate(refcompare_files):
+        dest = audio_folder / f.name
+        if not dest.exists():
+            shutil.copy2(f, dest)
+        n_frames, sr_hz, _ = get_wav_info(dest)
+        dur_beats = (n_frames / float(sr_hz) / 60.0) * float(bpm) if sr_hz else 8.0
+        energetic_sec = _find_energetic_point(dest)
+        key = str(i + 1) if i < 9 else ("0" if i == 9 else None)  # 1..9 then 0
+        locators.append((cursor + (energetic_sec / 60.0) * float(bpm),
+                         (key + " · " if key else "") + f.stem[:28], key))
+        clips.append({"file_path": dest, "rel_path": "Audio/" + f.name,
+                      "regions": None, "start_beat": cursor, "clip_name": f.stem})
+        print("  ref " + str(i + 1) + " (one track, Ext. Out, on): " + f.name
+              + ("  [energetic @ %.0fs]" % energetic_sec))
+        cursor = math.ceil((cursor + dur_beats + 8.0) / 4.0) * 4.0   # gap, snap to bar
+    primary = clips[0]
+    track = {"name": "References", "clip_name": primary["clip_name"],
+             "category": "refcompare", "color": REFCOMPARE_COLOR,
+             "file_path": primary["file_path"], "rel_path": primary["rel_path"],
+             "regions": None, "base_start_beat": primary["start_beat"],
+             "extra_clips": clips[1:]}
+    return [track], locators
+
+
 def _collect_flags(unmatched_updated, skipped, bpm_meta, bpm, silent_tracks):
     """Human-readable 'needs a look' notes for the UI — build decisions Sam
     should review BEFORE opening the project (not silent guesses)."""
@@ -596,6 +631,31 @@ def _extract_special_dirs(classified, references, unclassified):
     return updated, ref_compare
 
 
+def _gather_special_dir_files(stem_folder):
+    """(updated_files, ref_files) from any 'updated stems' / 'ref' subfolders of
+    a pack. Used by the multi-version path, which dispatches before
+    classify_stems runs, so it can wire those folders in rather than drop them."""
+    from versions import special_dir_kind
+    updated, ref_compare = [], []
+    folder = Path(stem_folder)
+    if not folder.exists():
+        return updated, ref_compare
+    for d in sorted(folder.iterdir()):
+        if not d.is_dir():
+            continue
+        kind = special_dir_kind(d.name)
+        if kind is None:
+            continue
+        files = [f for f in sorted(d.iterdir())
+                 if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+                 and not f.name.startswith(".")]
+        if kind == "update":
+            updated += files
+        elif kind == "ref":
+            ref_compare += files
+    return updated, ref_compare
+
+
 def _match_key(path):
     """Identity key for pairing an updated stem to the original it replaces.
 
@@ -674,10 +734,16 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     versions = detect_versions(stem_folder)
     if versions:
+        # A multi-version pack can still carry 'ref'/'updated stems' subfolders —
+        # gather them so the multi-version builder wires them in too (they're not
+        # part of any version and would otherwise be silently dropped).
+        mv_updated, mv_refcompare = _gather_special_dir_files(stem_folder)
         return build_multiversion_project(
             versions, artist, title, label, bpm, output_base, use_ml=use_ml,
             category_colors=category_colors,
             subgroup_categories=subgroup_categories,
+            updated_files=mv_updated, refcompare_files=mv_refcompare,
+            project_name=project_name,
         )
 
     if project_name is None:
@@ -1004,40 +1070,13 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     # LEFT ON, own colour — so Sam can flick across and A/B against his mix. Never
     # summed. A numbered locator is dropped on the ENERGETIC part (the drop) of
     # each ref so he can jump straight to the meat of each.
-    refcompare_tracks = []
-    ref_locators = []
-    if refcompare_files:
-        max_end_sec = 0.0
-        for s in stems:
-            for (_rs, _re) in (s.get("regions") or []):
-                max_end_sec = max(max_end_sec, _re)
-        content_end = CLIP_START_BEATS + (max_end_sec / 60.0) * float(bpm)
-        cursor = _next_phrase_boundary(content_end + 16.0)
-        clips = []
-        for i, f in enumerate(refcompare_files):
-            dest = audio_folder / f.name
-            if not dest.exists():
-                shutil.copy2(f, dest)
-            n_frames, sr_hz, _ = get_wav_info(dest)
-            dur_beats = (n_frames / float(sr_hz) / 60.0) * float(bpm) if sr_hz else 8.0
-            energetic_sec = _find_energetic_point(dest)
-            # Key-map: 1..9 then 0 for a 10th; more refs than that get no key.
-            key = str(i + 1) if i < 9 else ("0" if i == 9 else None)
-            ref_locators.append((cursor + (energetic_sec / 60.0) * float(bpm),
-                                 (key + " · " if key else "") + f.stem[:28], key))
-            clips.append({"file_path": dest, "rel_path": "Audio/" + f.name,
-                          "regions": None, "start_beat": cursor, "clip_name": f.stem})
-            print("  ref " + str(i + 1) + " (one track, Ext. Out, on): " + f.name
-                  + ("  [energetic @ %.0fs]" % energetic_sec))
-            cursor = math.ceil((cursor + dur_beats + 8.0) / 4.0) * 4.0  # gap, snap to bar
-        primary = clips[0]
-        refcompare_tracks.append({
-            "name": "References", "clip_name": primary["clip_name"],
-            "category": "refcompare", "color": REFCOMPARE_COLOR,
-            "file_path": primary["file_path"], "rel_path": primary["rel_path"],
-            "regions": None, "base_start_beat": primary["start_beat"],
-            "extra_clips": clips[1:],
-        })
+    max_end_sec = 0.0
+    for s in stems:
+        for (_rs, _re) in (s.get("regions") or []):
+            max_end_sec = max(max_end_sec, _re)
+    content_end = CLIP_START_BEATS + (max_end_sec / 60.0) * float(bpm)
+    refcompare_tracks, ref_locators = _make_refcompare_track(
+        refcompare_files, audio_folder, content_end, bpm)
 
     mix_files = [s["file_path"] for s in stems if not s.get("updated")]
     print("\nBouncing flat reference (summing " + str(len(mix_files)) + " mix stems)...")
@@ -1209,22 +1248,30 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
 
 def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                                use_ml=True, category_colors=None,
-                               subgroup_categories=None):
+                               subgroup_categories=None, updated_files=None,
+                               refcompare_files=None, project_name=None):
     """Build a project from multiple versions (extended / radio edit / dub ...).
 
     Each element shares ONE track across versions; versions are laid out as
     sequential sections down the arrangement (VERSION_GAP_BARS between them),
-    with a flat-ref bounce under each version.
+    with a flat-ref bounce under each version. 'updated stems' / 'ref' subfolders
+    (updated_files / refcompare_files) are wired in like the single-version path.
     """
-    project_name = artist + " - " + title + " [" + label + "]"
+    if project_name is None:
+        project_name = artist + " - " + title + " [" + label + "]"
     project_folder = Path(output_base) / (project_name + " Project")
     audio_folder = project_folder / "Audio"
+    updated_files = list(updated_files or [])
+    refcompare_files = list(refcompare_files or [])
     # Capture any pre-seeded master/reference in the target folder BEFORE copying
     # source stems in (same as the single-version path), so it's wired in below.
     preseeded = _find_preseeded_audio(project_folder, audio_folder)
     source_names = {Path(f).stem.lower() for v in versions for f in v["files"]}
+    source_names |= {Path(f).stem.lower() for f in updated_files + refcompare_files}
     for sub in ("Audio", "Ableton Project Info", "MASTER RENDERS"):
         (project_folder / sub).mkdir(parents=True, exist_ok=True)
+    updated_files, _sk = _ensure_wav_paths(updated_files, audio_folder / "_wav_staging")
+    refcompare_files, _sk = _ensure_wav_paths(refcompare_files, audio_folder / "_wav_staging")
 
     def _safe(name):
         return re.sub(r'[\\/:*?"<>|]+', "_", name).strip() or "Version"
@@ -1422,6 +1469,29 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                           "regions": None, "base_start_beat": offsets[0],
                           "extra_clips": []})
 
+    # 'ref' / 'updated stems' subfolders carried by a multi-version pack. Refs go
+    # on one 'References' track to the RIGHT of the last version (key-mapped drop
+    # locators); updated stems are parked muted in their own colour for A/B.
+    content_end = max(offsets[k] + pv[k].get("length_beats", 0.0)
+                      for k in range(len(pv)))
+    rc_tracks, rc_locs = _make_refcompare_track(
+        refcompare_files, audio_folder, content_end, bpm)
+    all_stems += rc_tracks
+    locators = list(locators) + rc_locs
+    mv_updated_names = []
+    for f in updated_files:
+        dest = audio_folder / f.name
+        if not dest.exists():
+            shutil.copy2(f, dest)
+        regions, _peak = find_audio_regions(dest, return_peak=True)
+        print("  updated stem (A/B, muted, own colour): " + f.name)
+        all_stems.append({"name": f.stem + " (updated)", "clip_name": f.stem,
+                          "category": "music", "color": UPDATED_TRACK_COLOR,
+                          "file_path": dest, "rel_path": "Audio/" + f.name,
+                          "regions": regions, "muted": True, "updated": True,
+                          "base_start_beat": offsets[0], "extra_clips": []})
+        mv_updated_names.append(f.stem)
+
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template (" + str(len(all_stems)) + " tracks)...")
     patch_project(template_path=get_template_path(), output_path=als_path,
@@ -1450,9 +1520,11 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "dry_parked": [], "silent": [],
         "references_supplied": sum(len(p["refs"]) for p in pv),
         "references_preseeded": len(preseeded_refs),
+        "updated_stems": [Path(f).stem for f in updated_files],
+        "refcompare": [Path(f).stem for f in refcompare_files],
         "flat_ref_peak": None,
         "skipped": [],
-        "flags": _collect_flags([], [], bpm_meta, bpm, []),
+        "flags": _collect_flags(mv_updated_names, [], bpm_meta, bpm, []),
         "multiversion": True,
         "versions": [p["name"] for p in pv],
     }
