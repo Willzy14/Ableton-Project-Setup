@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to project_builder.json and edit for THIS machine. All keys are optional — omit any and the engine falls back to a sensible default (env vars ABLETON_TEMPLATE_PATH / ABLETON_OUTPUT_BASE / PYTHON_ML_EXE / ENABLE_ML_CLASSIFIER / ML_TIMEOUT_SEC override both). project_builder.json is gitignored so machines don't clobber each other's paths.",
+  "template_path": "",
+  "output_base": "",
+  "python_ml_exe": "",
+  "enable_ml_classifier": true,
+  "ml_timeout_per_stem_sec": 240,
+  "ml_timeout_base_sec": 180
+}

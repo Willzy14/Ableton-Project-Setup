@@ -32,7 +32,15 @@ from stem_classifier import CATEGORIES, AUDIO_EXTENSIONS    # noqa: E402
 from validate_project import validate_path                 # noqa: E402
 
 # --- config locations ------------------------------------------------------
-CONFIG_DIR = APP_DIR / "Config"
+# From source: keep profiles/settings next to the app (Config/). Frozen by
+# PyInstaller (onefile): APP_DIR is the ephemeral _MEIPASS extract dir that's
+# wiped every launch, so persist to a stable per-user folder instead — else
+# every restart forgets the output folder + colour profiles.
+if getattr(sys, "frozen", False):
+    _base = os.environ.get("APPDATA") or str(Path.home())
+    CONFIG_DIR = Path(_base) / "StemToAbleton"
+else:
+    CONFIG_DIR = APP_DIR / "Config"
 PROFILES_PATH = CONFIG_DIR / "profiles.json"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
@@ -98,9 +106,26 @@ def save_profiles(profiles):
     _write_json(PROFILES_PATH, {"profiles": profiles})
 
 
+def _usable_output_dir(path):
+    """True if `path` is an absolute location valid on THIS OS (exists, or its
+    parent does so it can be created). Rejects a Windows path on macOS etc."""
+    try:
+        p = Path(path)
+        if not p.is_absolute():
+            return False
+        # A 'C:\...' string on POSIX isn't absolute → already rejected above.
+        return p.exists() or p.parent.exists()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def load_settings():
     data = _read_json(SETTINGS_PATH, None) or {}
-    if not data.get("output_folder"):
+    out = data.get("output_folder")
+    # Reset a missing OR unusable output folder (e.g. a Windows path that
+    # Dropbox-synced to the Mac, where it'd otherwise create a literal junk
+    # folder named 'C:\\Users\\...' under the CWD).
+    if not out or not _usable_output_dir(out):
         data["output_folder"] = str(get_output_base())
     if not data.get("active_profile"):
         data["active_profile"] = load_profiles()[0]["name"]

@@ -33,7 +33,26 @@ VERSION_GAP_BARS = 16   # gap between version sections on the timeline
 SUBGROUP_CATEGORIES = ("vocals", "drums", "music")
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "Config" / "project_builder.json"
-DEFAULT_TEMPLATE_PATH = Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates\Ableton Project Set Up 250 Tracks.als")
+_TEMPLATE_NAME = "Ableton Project Set Up 250 Tracks.als"
+
+
+def _first_existing(*paths):
+    for p in paths:
+        if p and Path(p).exists():
+            return Path(p)
+    return None
+
+
+# Template: Carillon's User Library, else Sam's Mac User Library, else a copy
+# checked into the repo (Templates/), else the Windows path as a last resort so
+# the value is never None. get_template_path() adds the frozen-EXE bundle + a
+# clear not-found error. Machine-specific values still come from config/env.
+DEFAULT_TEMPLATE_PATH = _first_existing(
+    Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates") / _TEMPLATE_NAME,
+    Path.home() / "Documents" / "Ableton" / "User Library" / "Templates" / _TEMPLATE_NAME,
+    Path.home() / "Music" / "Ableton" / "User Library" / "Templates" / _TEMPLATE_NAME,
+    Path(__file__).resolve().parents[1] / "Templates" / _TEMPLATE_NAME,
+) or Path(r"C:\Users\Carillon\Documents\Ableton\User Library\Templates") / _TEMPLATE_NAME
 
 # Colour for the reference tracks at the bottom (flat bounce + any supplied
 # ref/master). 14 = red — Sam wants the reference tracks red.
@@ -66,8 +85,21 @@ REFCOMPARE_COLOR = 26
 # Where built projects land by default. Sam's in-progress stem mixes live here,
 # so a freshly set-up project belongs alongside them — and this keeps generated
 # output OUT of the code repo (an env/config override still wins). CLI only; the
-# Studio App uses its own configured output folder.
-DEFAULT_OUTPUT_BASE = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\2. Ongoing Stem Mixes")
+# Studio App uses its own configured output folder. Falls back to a home-relative
+# path on a machine that isn't Carillon (e.g. Sam's Mac) so it's never an
+# unwritable Windows path on the wrong OS.
+def _default_output_base():
+    carillon = Path(r"C:\Users\Carillon\Wired Masters Dropbox\Sam Wills\2. Ongoing Stem Mixes")
+    if carillon.parent.exists():
+        return carillon
+    home = Path.home()
+    mac = home / "Wired Masters Dropbox" / "Sam Wills" / "2. Ongoing Stem Mixes"
+    if mac.parent.exists():
+        return mac
+    return home / "Downloads"
+
+
+DEFAULT_OUTPUT_BASE = _default_output_base()
 
 # Backwards-compatible names for older scripts importing these constants.
 TEMPLATE_PATH = DEFAULT_TEMPLATE_PATH
@@ -107,7 +139,16 @@ def get_template_path():
         bundled = Path(getattr(sys, "_MEIPASS", "")) / "template.als"
         if bundled.exists():
             return bundled
-    return _configured_path("ABLETON_TEMPLATE_PATH", "template_path", DEFAULT_TEMPLATE_PATH)
+    # An explicit env override is honoured verbatim (the user chose it).
+    env = os.environ.get("ABLETON_TEMPLATE_PATH")
+    if env:
+        return Path(env)
+    p = _configured_path("ABLETON_TEMPLATE_PATH", "template_path", DEFAULT_TEMPLATE_PATH)
+    # A stale CONFIG path (e.g. carried to another machine via Dropbox) falls
+    # back to whatever the resolved default found on this machine.
+    if not p.exists() and DEFAULT_TEMPLATE_PATH.exists():
+        return DEFAULT_TEMPLATE_PATH
+    return p
 
 
 def get_output_base():

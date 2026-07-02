@@ -22,6 +22,12 @@ __pycache__/
 .venv/
 venv/
 
+# Machine-specific config (absolute paths differ per machine + Dropbox-synced —
+# committing it made machines clobber each other's paths). Keep the .example.
+Config/project_builder.json
+Studio App/Config/settings.json
+Studio App/Config/profiles.json
+
 # OS
 .DS_Store
 Thumbs.db
