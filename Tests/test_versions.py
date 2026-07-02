@@ -70,6 +70,19 @@ def test_extended_chosen_over_radio_regardless_of_order():
     assert "Extended" in v[0]["name"]
 
 
+def test_ref_at_top_plus_version_subfolders():
+    # THAT KIND shape: a lone reference at the top + two mirroring version
+    # subfolders. The stray ref must NOT block version detection (else the
+    # versions get flattened and stacked into one build).
+    root = _pack({
+        "": ["THAT KIND - Should've Been (Extended Ref).wav"],
+        "Extended Group Stems": ["01_kick.wav", "02_bass.wav", "03_vox.wav"],
+        "Radio Group Stems":    ["01_kick.wav", "02_bass.wav", "03_vox.wav"],
+    })
+    v = detect_versions(root)
+    assert v is not None and len(v) == 2, v
+
+
 def test_nametoken_versions_one_flat_folder():
     # Get Right shape: one flat folder, versions told apart by a name token.
     root = _pack({"": [

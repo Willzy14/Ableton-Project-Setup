@@ -438,15 +438,17 @@ async function choosePaths(id) {
    Real filesystem paths are delivered by the Python side (see app.py
    _wire_native_drop): a document-level pywebview drop handler reads each file's
    pywebviewFullPath and calls window.__wmReceiveDrop(paths). Because that fires
-   on `document`, we track which card the pointer is over so the paths land on
-   the right one. The JS `drop` listener here is kept only for the visual
-   highlight and as a fallback for backends that expose File.path directly (or
-   the plain-browser preview, where we fall back to the picker). */
-let __wmActiveDropCard = null;
+   on `document`, it doesn't know WHICH card was dropped on. The card's own JS
+   `drop` DOES know (it's the real drop target), so each drop pushes its target
+   id onto a FIFO queue; the Nth Python delivery is matched to the Nth drop's
+   target. A single "last-hovered card" global (the old approach) raced dropped
+   paths onto the wrong card when drops interleaved — the cause of a project
+   being built with another card's stems. */
+const __wmDropQueue = [];
 
 function wireDrop(dz, id) {
-  dz.addEventListener("dragenter", (e) => { e.preventDefault(); __wmActiveDropCard = id; dz.classList.add("drag"); });
-  dz.addEventListener("dragover", (e) => { e.preventDefault(); __wmActiveDropCard = id; dz.classList.add("drag"); });
+  dz.addEventListener("dragenter", (e) => { e.preventDefault(); dz.classList.add("drag"); });
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag"); });
   dz.addEventListener("dragleave", (e) => {
     // Only clear when actually leaving the dropzone (not entering a child).
     if (!dz.contains(e.relatedTarget)) dz.classList.remove("drag");
@@ -454,7 +456,6 @@ function wireDrop(dz, id) {
   dz.addEventListener("drop", (e) => {
     e.preventDefault();
     dz.classList.remove("drag");
-    __wmActiveDropCard = id;
     // If the OS exposed real paths on the File objects, use them directly.
     // (WebView2/Chromium blanks File.path, so this is usually empty and the
     // Python bridge — __wmReceiveDrop — does the real work instead.)
@@ -464,12 +465,14 @@ function wireDrop(dz, id) {
     }
     if (paths.length) {
       applyDroppedPaths(id, paths);
-    } else if (!api()) {
+    } else if (api()) {
+      // App window: record THIS card as the target; Python delivers its paths
+      // next, matched FIFO in __wmReceiveDrop.
+      __wmDropQueue.push(id);
+    } else {
       // Plain-browser preview with no native bridge — fall back to the picker.
       choosePaths(id);
     }
-    // Otherwise: running in the app window — the Python drop handler will call
-    // window.__wmReceiveDrop() with the real paths in a moment.
   });
 }
 
@@ -488,14 +491,13 @@ function clearDragHighlights() {
   document.querySelectorAll(".dropzone.drag").forEach((el) => el.classList.remove("drag"));
 }
 
-/* Called from Python (app.py) with the real OS paths of dropped files/folders.
-   Routes them to whichever card the pointer was last over. */
+/* Called from Python (app.py) with the real OS paths of one dropped batch.
+   Matched FIFO to the card that actually received the corresponding drop. */
 window.__wmReceiveDrop = function (paths) {
-  const id = __wmActiveDropCard;
+  const id = __wmDropQueue.shift();
   clearDragHighlights();
-  if (id == null) return;
+  if (id == null) return;   // drop landed outside any card — ignore
   applyDroppedPaths(id, Array.isArray(paths) ? paths : [paths]);
-  __wmActiveDropCard = null;
 };
 
 function updateSummary() {
@@ -688,7 +690,8 @@ function resultBody(r) {
       : escapeHtml(g.name)).join(" &nbsp;·&nbsp; ");
   const pills = [];
   if (r.bpm != null) {
-    const conf = r.bpm_source ? `${r.bpm_inliers}/${r.bpm_onsets} on grid` : "manual";
+    const conf = r.bpm_source === "filename" ? "from filename"
+      : r.bpm_source ? `${r.bpm_inliers}/${r.bpm_onsets} on grid` : "manual";
     pills.push(`<span class="rc-pill">${Math.round(r.bpm)} BPM · ${conf}</span>`);
   }
   pills.push(`<span class="rc-pill">${r.tracks_total} tracks</span>`);

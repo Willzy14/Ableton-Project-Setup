@@ -41,6 +41,20 @@ def test_title_empty_when_no_paths():
     assert engine_api._title_from_paths([]) == ""
 
 
+# --- BPM read from filenames (pure) ---------------------------------------
+
+def test_bpm_from_filenames_reads_labelled_tempo():
+    from project_builder import _bpm_from_filenames
+    names = ["PINES - Align v2.9 120BPM 32-48 SW KICK GROUP.wav",
+             "PINES - Align v2.9 120BPM 32-48 SW BASS GROUP.wav"]
+    assert _bpm_from_filenames(names) == 120.0
+
+
+def test_bpm_from_filenames_none_when_absent():
+    from project_builder import _bpm_from_filenames
+    assert _bpm_from_filenames(["01_Kick.wav", "02_Bass.wav"]) is None
+
+
 # --- report is written -----------------------------------------------------
 
 def test_build_writes_session_report():

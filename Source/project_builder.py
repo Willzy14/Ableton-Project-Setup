@@ -226,20 +226,22 @@ def _find_preseeded_audio(project_folder, audio_folder):
     return found
 
 
-def detect_project_bpm(classified):
-    """Auto-detect BPM from the cleanest grid-locking rhythmic stem.
+def _bpm_from_filenames(paths):
+    """Read a labelled BPM off the filenames (e.g. '…120BPM…'). Dance packs
+    almost always name it, and a labelled tempo is authoritative. Returns the
+    most-voted value in 60–200, or None."""
+    votes = {}
+    for p in paths:
+        for m in re.finditer(r"(?<!\d)(\d{2,3})\s*bpm\b", Path(p).stem, re.IGNORECASE):
+            v = int(m.group(1))
+            if 60 <= v <= 200:
+                votes[v] = votes.get(v, 0) + 1
+    return float(max(votes, key=votes.get)) if votes else None
 
-    Scores every kick/drum/bass candidate instead of trusting the first result.
-    Prefer BPMs that multiple credible stems agree on, then choose the cleanest
-    grid lock inside that consensus group. This catches packs like Moby where
-    the kick is syncopated but snare/hat stems land exactly on the grid.
-    Returns (result_dict, source_path) or (None, None) if nothing detectable.
-    """
-    candidates = []
-    for cat in ("kick", "drums", "bass"):
-        candidates.extend(classified.get(cat, []))
+
+def _score_bpm_candidates(paths):
     scored = []
-    for f in candidates:
+    for f in paths:
         try:
             result = detect_bpm(f)
         except Exception:  # noqa: BLE001 - a bad stem should not abort the build
@@ -249,30 +251,46 @@ def detect_project_bpm(classified):
             inlier_ratio = result.get("n_inliers", 0) / n_onsets
             residual = result.get("residual_ms")
             residual = 999.0 if residual is None else float(residual)
-            quality = (inlier_ratio, -residual, result.get("n_inliers", 0))
-            credible = inlier_ratio >= 0.5 and residual <= 5.0
             scored.append({
                 "bpm_key": result.get("bpm_rounded"),
-                "credible": credible,
-                "quality": quality,
-                "result": result,
-                "source": f,
+                "credible": inlier_ratio >= 0.5 and residual <= 5.0,
+                "quality": (inlier_ratio, -residual, result.get("n_inliers", 0)),
+                "result": result, "source": f,
             })
+    return scored
+
+
+def _best_bpm(scored):
     if not scored:
         return None, None
-    consensus_counts = {}
-    for item in scored:
-        if item["credible"]:
-            consensus_counts[item["bpm_key"]] = consensus_counts.get(item["bpm_key"], 0) + 1
-    best = max(
-        scored,
-        key=lambda item: (
-            consensus_counts.get(item["bpm_key"], 0),
-            1 if item["credible"] else 0,
-            item["quality"],
-        ),
-    )
+    consensus = {}
+    for it in scored:
+        if it["credible"]:
+            consensus[it["bpm_key"]] = consensus.get(it["bpm_key"], 0) + 1
+    best = max(scored, key=lambda it: (consensus.get(it["bpm_key"], 0),
+                                       1 if it["credible"] else 0, it["quality"]))
     return best["result"], best["source"]
+
+
+def detect_project_bpm(classified):
+    """Auto-detect BPM from the cleanest grid-locking rhythmic stem.
+
+    Scores every kick/drum/bass candidate (consensus + grid-lock quality) — this
+    catches packs like Moby where the kick is syncopated but snare/hat land on
+    the grid. If NOTHING percussive locks credibly, it widens to melodic anchors
+    (a glockenspiel, pluck or stab is often a perfect grid reference — Sam's
+    "perc/glock in place of a snare"). Returns (result, source) or (None, None).
+    """
+    primary = []
+    for cat in ("kick", "drums", "bass"):
+        primary.extend(classified.get(cat, []))
+    scored = _score_bpm_candidates(primary)
+    if any(it["credible"] for it in scored):
+        return _best_bpm(scored)
+    extra = []
+    for cat in ("music", "fx", "vocals"):
+        extra.extend(classified.get(cat, []))
+    return _best_bpm(scored + _score_bpm_candidates(extra))
 
 
 def _version_alignment_sec(bpm_result):
@@ -741,11 +759,19 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     bpm_meta = None
     if bpm is None or str(bpm).lower() == "auto":
+        # A BPM labelled in the filenames ("…120BPM…") is authoritative — use it.
+        fn_bpm = _bpm_from_filenames([f for lst in classified.values() for f in lst])
+        if fn_bpm is not None:
+            bpm = fn_bpm
+            bpm_meta = {"source": "filename", "residual_ms": 0.0,
+                        "inliers": None, "onsets": None}
+            print("\nBPM " + str(int(bpm)) + " read from the filenames.")
+    if bpm is None or str(bpm).lower() == "auto":
         print("\nDetecting BPM from percussion...")
         result, src = detect_project_bpm(classified)
         if result is None:
             raise ValueError(
-                "Could not auto-detect BPM (no usable kick/drums/bass stem). "
+                "Could not auto-detect BPM (no usable rhythmic stem). "
                 "Pass the BPM explicitly as the 5th argument."
             )
         bpm = result["bpm_rounded"]
@@ -1209,6 +1235,11 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         pv.append({"name": v["name"], "vname": vname, "rel_prefix": rel_prefix,
                    "vdir": audio_folder / vname, "mix": mix, "refs": refs, "buses": buses})
 
+    if bpm is None or str(bpm).lower() == "auto":
+        fn_bpm = _bpm_from_filenames([s["file_path"] for p in pv for s in p["mix"]])
+        if fn_bpm is not None:
+            bpm = fn_bpm
+            print("\nBPM " + str(int(bpm)) + " read from the filenames.")
     if bpm is None or str(bpm).lower() == "auto":
         prim_classified = {}
         for s in pv[0]["mix"]:

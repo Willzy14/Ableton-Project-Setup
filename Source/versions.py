@@ -26,6 +26,9 @@ AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a"}
 # project_builder handles these specially; versions.py just skips them.
 _UPDATE_DIR_RE = re.compile(r"(?i)(updat|revis|replace|correct|amend|\bfix)")
 _REF_DIR_RE = re.compile(r"(?i)^ref(erence)?s?\b")
+# A file that reads as a reference/master/full-mix rather than a stem.
+_REFLIKE_RE = re.compile(
+    r"(?i)\b(ref|reference|master|mixdown|full ?mix|rough ?mix|bounce|premaster|pre ?master)\b")
 
 
 def special_dir_kind(dirname):
@@ -191,9 +194,22 @@ def detect_versions(stem_folder, mirror_threshold=0.5):
     # folder of revised stems being mis-read as a second project.
     subdirs = [d for d in subdirs if not special_dir_kind(d.name)]
 
-    if not top:
-        # No top-level baseline: versions may live entirely in subfolders.
+    # A lone reference/master at the top (e.g. "…(Extended Ref).wav") is NOT a
+    # stem baseline — ignore it for version detection so a pack that is really
+    # "Extended Group Stems/" + "Radio Group Stems/" is seen as two versions,
+    # not flattened into one stacked build. (classify_stems still picks the ref
+    # up later as a normal reference track.)
+    stem_top = [f for f in top if not _REFLIKE_RE.search(Path(f).stem)]
+
+    if not stem_top:
+        # No real top-level stems: versions may live entirely in subfolders.
         return _detect_subfolder_versions(subdirs, mirror_threshold)
+    top = stem_top
+
+    if not subdirs:
+        # Pure flat folder — versions may be distinguished by a name token
+        # (Get Right "S16" vs "S17 SHRT EDIT") rather than a subfolder.
+        return _detect_nametoken_versions(top, mirror_threshold)
 
     if not subdirs:
         # Pure flat folder — versions may be distinguished by a name token
