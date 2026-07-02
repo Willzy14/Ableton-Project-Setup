@@ -123,7 +123,9 @@ VOCAL_PATTERNS = [
     r"\bb vs\b",
     r"\bharm\b",
     r"\bchoir",
-    r"\bchop",
+    # NB: "chop"/"chops" is NOT here — it's ambiguous (Piano Chops / Synth Chops
+    # are instrumental and very common in house). A genuine vocal chop still
+    # matches via "vox"/"vocal" in its name; a bare "Chops" falls to music.
 ]
 
 FX_PATTERNS = [
@@ -290,16 +292,17 @@ def classify_stems(stem_folder):
     """
     stem_folder = Path(stem_folder)
 
-    all_files = []
-    for f in sorted(stem_folder.iterdir()):
-        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
-            all_files.append(f)
+    def _is_stem(f):
+        # Skip macOS AppleDouble sidecars ('._Kick.wav') and other dotfiles that
+        # a Mac-made zip injects — they'd otherwise become phantom silent twins.
+        return (f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+                and not f.name.startswith("."))
+
+    all_files = [f for f in sorted(stem_folder.iterdir()) if _is_stem(f)]
 
     for sub in sorted(stem_folder.iterdir()):
-        if sub.is_dir():
-            for f in sorted(sub.iterdir()):
-                if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
-                    all_files.append(f)
+        if sub.is_dir() and sub.name != "__MACOSX" and not sub.name.startswith("."):
+            all_files.extend(f for f in sorted(sub.iterdir()) if _is_stem(f))
 
     classified = {cat: [] for cat in CATEGORIES}
     references = []

@@ -465,12 +465,19 @@ def _collect_flags(unmatched_updated, skipped, bpm_meta, bpm, silent_tracks):
     if skipped:
         flags.append("Left OUT of the build (unreadable / sample-rate mismatch): "
                      + ", ".join(skipped))
-    if bpm_meta:
+    if bpm_meta and bpm_meta.get("source") != "filename":
         res = bpm_meta.get("residual_ms")
+        b = int(float(bpm))
         if res is None or res > 5.0:
-            flags.append("Auto-BPM " + str(int(float(bpm))) + " is low-confidence"
+            flags.append("Auto-BPM " + str(b) + " is low-confidence"
                          + ((" (±" + str(res) + "ms)") if res is not None else "")
                          + " — verify the tempo.")
+        elif b > 150 or b < 90:
+            # Clean grid-lock but an unusual tempo for dance — the classic
+            # half/double-time trap (e.g. 168 is likely 84×2).
+            flags.append("Auto-BPM " + str(b) + " is outside the usual range — "
+                         "check it isn't half/double-time (try " + str(b // 2)
+                         + " or " + str(b * 2) + ").")
     if silent_tracks:
         flags.append(str(len(silent_tracks)) + " empty / dead stem(s) parked at the bottom "
                      "— check they weren't meant to have audio.")
@@ -1235,10 +1242,13 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         pv.append({"name": v["name"], "vname": vname, "rel_prefix": rel_prefix,
                    "vdir": audio_folder / vname, "mix": mix, "refs": refs, "buses": buses})
 
+    bpm_meta = None
     if bpm is None or str(bpm).lower() == "auto":
         fn_bpm = _bpm_from_filenames([s["file_path"] for p in pv for s in p["mix"]])
         if fn_bpm is not None:
             bpm = fn_bpm
+            bpm_meta = {"source": "filename", "residual_ms": 0.0,
+                        "inliers": None, "onsets": None}
             print("\nBPM " + str(int(bpm)) + " read from the filenames.")
     if bpm is None or str(bpm).lower() == "auto":
         prim_classified = {}
@@ -1248,6 +1258,8 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         if result is None:
             raise ValueError("Could not auto-detect BPM; pass it explicitly.")
         bpm = result["bpm_rounded"]
+        bpm_meta = {"source": src.name, "residual_ms": result["residual_ms"],
+                    "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
         print("\nBPM " + str(bpm) + " (from " + src.name + ")")
     bpm = float(bpm)
 
@@ -1421,7 +1433,11 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     report = {
         "project_name": project_name, "artist": artist, "title": title, "label": label,
         "als_name": als_path.name,
-        "bpm": float(bpm), "bpm_source": None,
+        "bpm": float(bpm),
+        "bpm_source": bpm_meta["source"] if bpm_meta else None,
+        "bpm_residual_ms": bpm_meta["residual_ms"] if bpm_meta else None,
+        "bpm_inliers": bpm_meta["inliers"] if bpm_meta else None,
+        "bpm_onsets": bpm_meta["onsets"] if bpm_meta else None,
         "tracks_total": len(all_stems),
         "categories": {cat: cat_counts[cat]
                        for cat in sorted(cat_counts, key=lambda c: CATEGORIES[c]["order"])},
@@ -1432,7 +1448,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "references_preseeded": len(preseeded_refs),
         "flat_ref_peak": None,
         "skipped": [],
-        "flags": [],
+        "flags": _collect_flags([], [], bpm_meta, bpm, []),
         "multiversion": True,
         "versions": [p["name"] for p in pv],
     }

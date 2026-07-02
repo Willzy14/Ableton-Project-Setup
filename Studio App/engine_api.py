@@ -174,27 +174,41 @@ def _title_from_paths(paths):
 
 def _audio_files_in(folder):
     return [p for p in Path(folder).iterdir()
-            if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS]
+            if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS
+            and not p.name.startswith(".")]   # skip macOS ._ sidecars / dotfiles
+
+
+def _has_audio(folder):
+    """True if `folder` contains any audio anywhere below it."""
+    for p in Path(folder).rglob("*"):
+        if (p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS
+                and not p.name.startswith(".")):
+            return True
+    return False
+
+
+def _real_subdirs(folder):
+    return [p for p in Path(folder).iterdir()
+            if p.is_dir() and p.name != "__MACOSX" and not p.name.startswith(".")]
 
 
 def _find_audio_root(folder):
-    """Return the deepest single folder that directly holds the audio files.
+    """Return the folder the engine should scan, digging ONLY through true
+    single-child wrappers (a zip that extracts to one folder of stems).
 
-    Zips often extract to one wrapper folder; this digs through single-child
-    wrappers to the folder that actually contains the stems.
+    Critically: if a folder has audio at its top OR multiple audio-bearing
+    branches (REF/, UPDATE STEMS/, category splits, version folders), it is
+    returned UNCHANGED so detect_versions / classify_stems / _extract_special_dirs
+    can resolve the whole tree. The old 'return the richest subfolder' behaviour
+    silently dropped every sibling branch — the heir to the zip bug.
     """
     folder = Path(folder)
     if _audio_files_in(folder):
         return folder
-    subdirs = [p for p in folder.iterdir() if p.is_dir()]
-    # search children for the one richest in audio
-    best, best_n = folder, 0
-    for d in subdirs:
-        cand = _find_audio_root(d)
-        n = len(_audio_files_in(cand))
-        if n > best_n:
-            best, best_n = cand, n
-    return best
+    audio_subs = [d for d in _real_subdirs(folder) if _has_audio(d)]
+    if len(audio_subs) == 1:
+        return _find_audio_root(audio_subs[0])   # single wrapper — descend
+    return folder                                # 0 or 2+ branches — keep parent
 
 
 def prepare_stem_folder(paths, workdir):

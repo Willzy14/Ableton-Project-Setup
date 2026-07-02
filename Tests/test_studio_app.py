@@ -87,6 +87,27 @@ def test_prepare_single_clean_folder_used_in_place():
     assert folder == stems   # no needless staging copy when it's already clean WAVs
 
 
+def test_find_audio_root_keeps_parent_when_multiple_branches():
+    # No top-level audio but 2+ audio-bearing subfolders (versions / REF+stems /
+    # category splits) -> return the PARENT so downstream code sees all branches,
+    # NOT the single richest subfolder (which silently dropped the rest).
+    tmp = Path(tempfile.mkdtemp())
+    _tone(tmp / "Extended" / "01_Kick.wav"); _tone(tmp / "Extended" / "02_Bass.wav")
+    _tone(tmp / "Radio" / "01_Kick.wav")
+    assert ea._find_audio_root(tmp) == tmp
+
+
+def test_find_audio_root_ignores_macosx_and_dotdirs():
+    # A macOS zip's __MACOSX/ sibling must not be mistaken for a content branch.
+    tmp = Path(tempfile.mkdtemp())
+    inner = tmp / "wrapper"
+    _tone(inner / "01_Kick.wav"); _tone(inner / "02_Bass.wav")
+    (tmp / "__MACOSX").mkdir()
+    (tmp / "__MACOSX" / "._01_Kick.wav").write_bytes(b"AppleDouble")
+    assert ea._find_audio_root(tmp) == inner            # descends the real wrapper
+    assert len(ea._audio_files_in(inner)) == 2          # dotfiles excluded
+
+
 def test_prepare_single_zip_preserves_subfolders():
     # A single dropped .zip with UPDATE STEMS / REF subfolders must extract with
     # those subfolders INTACT (and no duplicate) so the engine reads one project,
