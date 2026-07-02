@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -436,50 +437,127 @@ class Api:
         # Global sub-group preference (Vocals/Drums/Music checkboxes). A list
         # (possibly empty to disable); None falls back to the engine default.
         subgroups = settings.get("subgroups")
-        # The Studio App runs ML OFF (the decided model): named packs classify by
-        # filename, and ML in the GUI is heavy (Demucs spins the fans) and — when
-        # frozen — would spawn the GUI EXE as its own subprocess. ML-only naming
-        # of fully-generic stems stays a CLI job.
-        use_ml = False
 
         for i, proj in enumerate(projects):
             st = self._status[i]
-            tmp = None
+            st["state"] = "running"
+            st["message"] = "Preparing stems…"
+            profile = profiles.get(proj.get("profile")) or default_profile()
+            job = {
+                "paths": proj["paths"],
+                "title": proj.get("title") or "Untitled",
+                "colors": {**DEFAULT_COLORS, **profile.get("colors", {})},
+                "subgroups": subgroups,
+                "output_base": output_base,
+                "bpm": proj.get("bpm") or None,
+            }
             try:
-                st["state"] = "running"
-                st["message"] = "Preparing stems…"
-                profile = profiles.get(proj.get("profile")) or default_profile()
-                colors = {**DEFAULT_COLORS, **profile.get("colors", {})}
+                res = self._build_in_subprocess(job, st)
+            except OSError:
+                # Couldn't spawn (odd env) — build inline as a fallback. Loses
+                # crash isolation but the batch still works.
+                res = self._build_inline(job, st)
 
-                tmp = Path(tempfile.mkdtemp(prefix="studioapp_"))
-                stem_folder = prepare_stem_folder(proj["paths"], tmp / "stems")
-
-                title = proj.get("title") or "Untitled"
-                artist, ttl, label = parse_project_name(title)
-                bpm = proj.get("bpm") or None
-
-                st["message"] = "Building project…"
-                folder = build_project(
-                    str(stem_folder), artist, ttl, label,
-                    bpm=bpm, output_base=output_base,
-                    project_name=title, category_colors=colors,
-                    subgroup_categories=subgroups, use_ml=use_ml,
-                )
-                st["folder"] = str(folder)
-
-                st["message"] = "Validating…"
-                als = next(Path(folder).glob("*.als"), None)
-                st["als"] = str(als) if als else ""
-                st["report"] = _read_json(Path(folder) / "Session Report.json", None)
-                ok = bool(als) and validate_path(als).ok
+            if res.get("ok"):
+                st["folder"] = res.get("folder", "")
+                st["als"] = res.get("als", "")
+                st["report"] = res.get("report")
+                ok = res.get("validated", False)
                 st["state"] = "done" if ok else "warn"
                 st["message"] = "Done" if ok else "Built — validator flagged it, check by ear"
-            except Exception as exc:  # noqa: BLE001 — one bad pack must not kill the batch
+            else:
                 st["state"] = "failed"
-                st["message"] = str(exc)
-                st["trace"] = traceback.format_exc()
-            finally:
-                if tmp and tmp.exists():
-                    shutil.rmtree(tmp, ignore_errors=True)
+                st["message"] = res.get("error") or "Build failed"
+                st["trace"] = res.get("trace", "")
 
         self._running = False
+
+    # Wall-clock ceiling per project build (a hung build must not stall the
+    # batch forever; generous — big packs take a few minutes, not 30).
+    BUILD_TIMEOUT_SEC = 1800
+
+    def _build_in_subprocess(self, job, st):
+        """Run one build in an ISOLATED process (build_worker.py).
+
+        A native crash (access violation in numpy/BLAS, a Dropbox blip mid-read
+        — seen intermittently in battle testing) then costs ONE project instead
+        of killing the whole app and batch. Streams the engine's progress lines
+        into the card while it works.
+        """
+        job_file = Path(tempfile.mkdtemp(prefix="studioapp_job_")) / "job.json"
+        job_file.write_text(json.dumps(job), encoding="utf-8")
+        if getattr(sys, "frozen", False):
+            # Packaged: the EXE re-runs itself headless (app.py intercepts
+            # --build-worker before any window is created).
+            cmd = [sys.executable, "--build-worker", str(job_file)]
+        else:
+            cmd = [sys.executable, str(APP_DIR / "build_worker.py"), str(job_file)]
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUNBUFFERED"] = "1"
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", env=env,
+            cwd=str(APP_DIR))
+        killer = threading.Timer(self.BUILD_TIMEOUT_SEC, proc.kill)
+        killer.daemon = True
+        killer.start()
+        result = None
+        tail = []
+        try:
+            for line in proc.stdout:
+                line = line.rstrip()
+                if not line:
+                    continue
+                if line.startswith("@@RESULT@@"):
+                    try:
+                        result = json.loads(line[len("@@RESULT@@"):])
+                    except Exception:  # noqa: BLE001
+                        result = None
+                    continue
+                tail.append(line)
+                if len(tail) > 60:
+                    del tail[0]
+                # Live progress: the engine's latest print becomes the card note.
+                st["message"] = line[:110]
+            proc.wait()
+        finally:
+            killer.cancel()
+            shutil.rmtree(job_file.parent, ignore_errors=True)
+        if result is not None:
+            return result
+        # No result marker: the child died hard (native crash) or was killed.
+        why = ("Build timed out after " + str(self.BUILD_TIMEOUT_SEC // 60)
+               + " min" if proc.returncode in (-9, 1) and not tail else
+               "The build engine crashed on this pack (native error, exit "
+               + str(proc.returncode) + "). The rest of the batch continues — "
+               "try this pack again.")
+        return {"ok": False, "error": why, "trace": "\n".join(tail[-40:])}
+
+    def _build_inline(self, job, st):
+        """Fallback: build in-process (old behaviour, no crash isolation)."""
+        tmp = None
+        try:
+            tmp = Path(tempfile.mkdtemp(prefix="studioapp_"))
+            stem_folder = prepare_stem_folder(job["paths"], tmp / "stems")
+            artist, ttl, label = parse_project_name(job["title"])
+            st["message"] = "Building project…"
+            folder = build_project(
+                str(stem_folder), artist, ttl, label,
+                bpm=job.get("bpm") or None, output_base=job["output_base"],
+                project_name=job["title"], category_colors=job.get("colors"),
+                subgroup_categories=job.get("subgroups"), use_ml=False,
+            )
+            folder = Path(folder)
+            st["message"] = "Validating…"
+            als = next(folder.glob("*.als"), None)
+            v = validate_path(als) if als else None
+            return {"ok": True, "folder": str(folder),
+                    "als": str(als) if als else "",
+                    "validated": bool(v and v.ok),
+                    "report": _read_json(folder / "Session Report.json", None)}
+        except Exception as exc:  # noqa: BLE001 — one bad pack must not kill the batch
+            return {"ok": False, "error": str(exc), "trace": traceback.format_exc()}
+        finally:
+            if tmp and tmp.exists():
+                shutil.rmtree(tmp, ignore_errors=True)

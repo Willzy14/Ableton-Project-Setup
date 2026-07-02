@@ -9,6 +9,14 @@ import sys
 import traceback
 from pathlib import Path
 
+# Headless build-worker mode: the batch runner spawns this same program with
+# --build-worker <job.json> so each project builds in an isolated process (a
+# native crash costs one project, not the whole app). Intercept BEFORE any
+# window/webview work.
+if "--build-worker" in sys.argv:
+    from build_worker import main as _worker_main
+    sys.exit(_worker_main())
+
 import webview
 import webview.dom  # DOMEventHandler + document event bridge for OS drag-drop
 

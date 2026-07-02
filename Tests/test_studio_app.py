@@ -134,6 +134,38 @@ def test_prepare_single_zip_preserves_subfolders():
     assert detect_versions(folder) is None              # ONE project, not two
 
 
+def test_build_worker_subprocess_contract():
+    # The isolated build worker must run a real build in its own process and
+    # print a parseable @@RESULT@@ with folder/als/report — the crash-isolation
+    # path the batch runner relies on (a native crash then costs ONE project).
+    import subprocess as sp
+    import json as _json
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Source"))
+    from project_builder import get_template_path
+    if not Path(get_template_path()).exists():
+        print("SKIP test_build_worker_subprocess_contract (template not on this machine)")
+        return
+    tmp = Path(tempfile.mkdtemp())
+    src = tmp / "pack"
+    for nm, f in [("01_Kick", 60), ("02_Bass", 90), ("03_Synth", 440)]:
+        _tone(src / (nm + ".wav"), f=f)
+    job = {"paths": [str(src)], "title": "Worker - Test [Lab]", "colors": None,
+           "subgroups": [], "output_base": str(tmp / "out"), "bpm": 124}
+    job_file = tmp / "job.json"
+    job_file.write_text(_json.dumps(job), encoding="utf-8")
+    worker = Path(__file__).resolve().parents[1] / "Studio App" / "build_worker.py"
+    cp = sp.run([sys.executable, str(worker), str(job_file)],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=300)
+    marker = [l for l in cp.stdout.splitlines() if l.startswith("@@RESULT@@")]
+    assert marker, "no @@RESULT@@ line; rc=" + str(cp.returncode) + " out=" + cp.stdout[-400:]
+    res = _json.loads(marker[-1][len("@@RESULT@@"):])
+    assert res["ok"] is True, res
+    assert res["validated"] is True, res
+    assert res["report"] and res["report"]["bpm"] == 124.0
+    assert Path(res["als"]).exists()
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

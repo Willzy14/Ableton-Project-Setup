@@ -847,9 +847,19 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         print("\nDetecting BPM from percussion...")
         result, src = detect_project_bpm(classified)
         if result is None:
+            # Diagnose the shape: a folder of mixdowns/masters (a delivery batch,
+            # not one song's stems) fails here — say so instead of a bare error.
+            n_stems = sum(len(v) for v in classified.values())
+            if len(references) >= max(2, n_stems):
+                raise ValueError(
+                    "This doesn't look like one song's stem pack — "
+                    + str(len(references)) + " file(s) read as full mixes/"
+                    "masters vs " + str(n_stems) + " stems (a delivery batch "
+                    "of mixdowns?). Build one song's stems at a time, or type "
+                    "a BPM to force a build.")
             raise ValueError(
                 "Could not auto-detect BPM (no usable rhythmic stem). "
-                "Pass the BPM explicitly as the 5th argument."
+                "Type the BPM to build anyway."
             )
         bpm = result["bpm_rounded"]
         res_ms = result["residual_ms"]
