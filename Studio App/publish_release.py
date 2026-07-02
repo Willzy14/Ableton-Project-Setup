@@ -62,6 +62,15 @@ def main(argv=None):
         new = _bump(current, args.bump)
     else:
         new = current
+    # Guard the self-update loop: --bump changes VERSION, but the EXE bakes in
+    # its VERSION at BUILD time. Bumping here AND writing latest.json/download in
+    # the same call would advertise a version newer than any built EXE. Bump
+    # BEFORE building; stamp latest.json (with --url) AFTER, without --bump.
+    if (args.bump or args.set_version) and args.url:
+        print("REFUSED: don't bump the version AND stamp a download URL in one "
+              "call — the EXE would be older than latest.json (update loop). "
+              "Bump first, build the EXE, THEN run again with --url only.")
+        return 2
     VERSION_FILE.write_text(new + "\n", encoding="utf-8")
 
     base = _release_base()

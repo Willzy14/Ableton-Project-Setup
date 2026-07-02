@@ -8,8 +8,14 @@ template ALS, so it runs on a studio machine with no Python, no Dropbox, and no
 template in the User Library. The heavy ML stack (torch/demucs/whisper) is
 EXCLUDED — filename + audio classification still works; ML-only naming of
 totally generic stems is the single thing the EXE gives up, by design (it would
-balloon the download to multiple GB). After building, run publish_release.py to
-produce latest.json for the public releases feed.
+balloon the download to multiple GB).
+
+RELEASE ORDER (important — the EXE bakes in the current VERSION at build time):
+  1. Bump first:   publish_release.py --bump patch   (edits VERSION only)
+  2. Build:        build_exe.py                       (bakes the bumped VERSION)
+  3. Stamp+upload: publish_release.py --url <exe-url> (writes latest.json AT the
+     current VERSION — do NOT --bump here, or latest.json would advertise a
+     version newer than the EXE and the app would self-update in a loop).
 """
 import os
 import shutil
