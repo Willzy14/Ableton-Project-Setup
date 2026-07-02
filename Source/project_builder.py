@@ -706,8 +706,12 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         classified, references, unclassified)
     # Names of every source stem, by stem (no extension — survives WAV
     # normalisation), so pre-seeded extras can be told apart from our own copies.
+    # Includes the updated/ref-folder files too, so rebuilding into an existing
+    # project folder doesn't re-wire last build's REF/UPDATE copies as duplicate
+    # reference tracks (they'd otherwise pile up one more per rebuild).
     source_names = {p.stem.lower()
-                    for lst in (references, unclassified, *classified.values())
+                    for lst in (references, unclassified, updated_files,
+                                refcompare_files, *classified.values())
                     for p in lst}
 
     # Normalise non-WAV audio (AIFF/MP3/FLAC dropped in with the stems) to WAV

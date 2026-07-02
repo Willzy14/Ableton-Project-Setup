@@ -187,6 +187,12 @@ def _read_wav_header(wav_path):
                 n_channels = _struct.unpack("<H", fmt_data[2:4])[0]
                 sample_rate = _struct.unpack("<I", fmt_data[4:8])[0]
                 bits_per_sample = _struct.unpack("<H", fmt_data[14:16])[0]
+                # WAVE_FORMAT_EXTENSIBLE (Pro Tools / Cubase / Nuendo / Logic
+                # write 32-bit float this way): the real format is the first 2
+                # bytes of the SubFormat GUID, not the 0xFFFE tag. Without this,
+                # a 32-bit-float stem decodes as int32 garbage.
+                if fmt_tag == 0xFFFE and len(fmt_data) >= 26:
+                    fmt_tag = _struct.unpack("<H", fmt_data[24:26])[0]
             elif chunk_id == b"data":
                 data_offset = f.tell()
                 data_size = chunk_size
@@ -416,6 +422,12 @@ def _build_clip_xml(stem_name, clip_color, rel_path, abs_path, sample_count,
 
     clip_start = base_start_beat + (loop_start_sec / 60.0) * bpm
     clip_end = base_start_beat + (loop_end_sec / 60.0) * bpm
+    # Never write a negative arrangement time (a long pre-kick intro can push a
+    # version's offset below 0) — Ableton mis-places or rejects it. Clamp to 0,
+    # shifting the whole clip so its content still starts where intended.
+    if clip_start < 0:
+        clip_end -= clip_start
+        clip_start = 0.0
 
     clip_lines = [
         t + '<AudioClip Id="' + str(clip_id) + '" Time="' + str(clip_start) + '">' + CRLF,

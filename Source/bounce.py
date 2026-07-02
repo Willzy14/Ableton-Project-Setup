@@ -15,6 +15,7 @@ import struct as _struct
 import sys
 import time
 from array import array
+from collections import Counter
 from operator import add
 from pathlib import Path
 
@@ -186,15 +187,18 @@ def sum_stems_to_wav(stem_paths, output_path, chunk_seconds=1.0):
     """Sum stems into one 32-bit float stereo WAV.
 
     Returns a dict: {path, n_frames, sample_rate, channels, peak, n_summed,
-    skipped, engine}. Stems whose sample rate differs from the first are
-    skipped (reported in 'skipped') rather than misaligned.
+    skipped, engine}. Stems whose sample rate differs from the pack's
+    majority rate are skipped (reported in 'skipped') rather than misaligned.
     """
     paths = [Path(p) for p in stem_paths]
     if not paths:
         raise ValueError("no stems to sum")
 
     headers = [(p, _read_wav_header(p)) for p in paths]
-    sr0 = headers[0][1]["rate"]
+    # Use the MOST COMMON sample rate, not the first stem's — otherwise a single
+    # off-rate stem sorting first would drop every other stem from the sum.
+    rate_counts = Counter(h["rate"] for _p, h in headers if h["n_frames"] > 0)
+    sr0 = rate_counts.most_common(1)[0][0] if rate_counts else headers[0][1]["rate"]
     included = []
     skipped = []
     for p, hdr in headers:
@@ -203,7 +207,7 @@ def sum_stems_to_wav(stem_paths, output_path, chunk_seconds=1.0):
         else:
             included.append((p, hdr))
     if not included:
-        raise ValueError("no stems share the first stem's sample rate")
+        raise ValueError("no stems share the majority sample rate")
 
     n_frames_out = max(hdr["n_frames"] for _, hdr in included)
     engine = "numpy" if _np is not None else "stdlib"
