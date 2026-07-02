@@ -203,13 +203,17 @@ def _find_audio_root(folder):
     can resolve the whole tree. The old 'return the richest subfolder' behaviour
     silently dropped every sibling branch — the heir to the zip bug.
     """
+    from versions import special_dir_kind
     folder = Path(folder)
     if _audio_files_in(folder):
         return folder
     audio_subs = [d for d in _real_subdirs(folder) if _has_audio(d)]
-    if len(audio_subs) == 1:
-        return _find_audio_root(audio_subs[0])   # single wrapper — descend
-    return folder                                # 0 or 2+ branches — keep parent
+    # Descend a single wrapper — but NOT into a lone 'REF'/'UPDATE STEMS' child
+    # (that's a special folder, not the stems), else its files would be built as
+    # ordinary tracks. Keep the parent so the engine resolves it correctly.
+    if len(audio_subs) == 1 and not special_dir_kind(audio_subs[0].name):
+        return _find_audio_root(audio_subs[0])
+    return folder                                # 0 / 2+ / special — keep parent
 
 
 def prepare_stem_folder(paths, workdir):

@@ -465,11 +465,14 @@ function wireDrop(dz, id) {
     }
     if (paths.length) {
       applyDroppedPaths(id, paths);
-    } else if (api()) {
-      // App window: record THIS card as the target; Python delivers its paths
-      // next, matched FIFO in __wmReceiveDrop.
+    } else if (api() && e.dataTransfer.files.length > 0) {
+      // App window, a real FILE drop with paths hidden by WebView2: record THIS
+      // card and let Python deliver its paths next (matched FIFO). Only push for
+      // actual files — a text/URL drop would leave a stale entry that misroutes
+      // the next real drop. Python always calls __wmReceiveDrop, so the shift
+      // stays 1:1 with these pushes.
       __wmDropQueue.push(id);
-    } else {
+    } else if (!api()) {
       // Plain-browser preview with no native bridge — fall back to the picker.
       choosePaths(id);
     }
@@ -664,12 +667,20 @@ function pollStatus() {
   }, 700);
 }
 
-/* Map the polled status array back onto the queue cards by build order, then
-   re-render so each card shows its own live state / result inline. */
+/* Map the polled status array back onto the queue cards by build order, and
+   re-render ONLY if something actually changed — a blind 700ms rebuild wipes
+   the DOM every tick (kills typing focus on other cards, re-collapses an open
+   error trace). */
 function applyStatusToCards(statusList) {
   const order = State.buildOrder || [];
-  statusList.forEach((st, i) => { if (order[i]) order[i].status = st; });
-  renderQueue();
+  let changed = false;
+  statusList.forEach((st, i) => {
+    const p = order[i];
+    if (!p) return;
+    const before = p.status ? JSON.stringify(p.status) : "";
+    if (JSON.stringify(st) !== before) { p.status = st; changed = true; }
+  });
+  if (changed) renderQueue();
 }
 
 /* Engine category -> a swatch colour from the active profile (kick rides drums,

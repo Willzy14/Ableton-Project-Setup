@@ -1,6 +1,8 @@
 """Regression tests for multi-version stem classification."""
 import sys
+import struct
 import tempfile
+import wave
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Source"))
@@ -8,11 +10,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Source"))
 import project_builder  # noqa: E402
 
 
+def _tiny_wav(path):
+    """A real (short) WAV so _ensure_wav_paths' header validation accepts it."""
+    with wave.open(str(path), "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(44100)
+        w.writeframes(struct.pack("<" + "h" * 100, *([0] * 100)))
+
+
 def test_multiversion_unknown_stems_use_ml_category():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         source = root / "Audio 01.wav"
-        source.write_bytes(b"fake wav")
+        _tiny_wav(source)
         output_dir = root / "Output Audio"
 
         originals = {
@@ -53,7 +62,7 @@ def test_multiversion_unknown_stems_fall_back_to_music_when_ml_disabled():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         source = root / "Audio 02.wav"
-        source.write_bytes(b"fake wav")
+        _tiny_wav(source)
 
         originals = {
             "_ml_classify_unknowns": project_builder._ml_classify_unknowns,

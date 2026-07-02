@@ -50,10 +50,10 @@ def _wire_native_drop(window):
                 files = (event.get("dataTransfer") or {}).get("files") or []
                 paths = [f.get("pywebviewFullPath") for f in files
                          if f.get("pywebviewFullPath")]
-                if not paths:
-                    return
-                # Hand the real OS paths to the front-end for routing. JSON-encode
-                # so backslashes/spaces survive the JS string literal intact.
+                # ALWAYS deliver (even an empty list) so the front-end's FIFO
+                # queue shift stays 1:1 with card drops — a text/URL drop that
+                # pushed a target must be consumed here, not left to misroute the
+                # next real stem drop. JSON-encode so paths survive the literal.
                 payload = json.dumps(paths)
                 window.evaluate_js(
                     f"window.__wmReceiveDrop && window.__wmReceiveDrop({payload})"

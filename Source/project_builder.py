@@ -158,11 +158,22 @@ def _ensure_wav_paths(paths, staging_dir):
     untouched (zero cost for normal packs). A file that can't be read is dropped
     with a warning rather than killing the build. Returns (new_paths, skipped).
     """
+    from als_patcher import _read_wav_header
     new, skipped = [], []
     sf = None
     for p in paths:
         p = Path(p)
         if p.suffix.lower() == ".wav":
+            # Validate the header — a 0-byte / corrupt / mislabelled .wav must be
+            # SKIPPED (with a warning), not abort the whole pack when the engine
+            # later tries to read it.
+            try:
+                hdr = _read_wav_header(p)
+                if hdr["rate"] <= 0 or hdr["data_size"] <= 0 or hdr["bps"] <= 0:
+                    raise ValueError("empty or invalid WAV")
+            except Exception as exc:  # noqa: BLE001
+                skipped.append((p, "bad WAV: " + str(exc)))
+                continue
             new.append(p)
             continue
         if sf is None:
@@ -602,18 +613,24 @@ def _write_ml_report(report_path, ordered_paths, ml_results):
         fh.write("\n".join(lines))
 
 
-def _extract_special_dirs(classified, references, unclassified):
-    """Pull files that live in an 'updated stems' / 'ref' subfolder out of the
+def _extract_special_dirs(classified, references, unclassified, root):
+    """Pull files that live in an 'updated stems' / 'ref' SUBfolder out of the
     normal classification (classify_stems recurses into subfolders, so they'd
     otherwise be built as ordinary tracks). Returns (updated_files, ref_files);
-    the classified/references/unclassified containers are edited in place."""
+    the classified/references/unclassified containers are edited in place.
+
+    Only SUBfolders are sifted — a file directly in the pack root is never
+    diverted even if the pack is named like 'Coldplay - Fix You Stems', so a
+    whole pack isn't mis-sifted into muted A/B tracks."""
     from versions import special_dir_kind
+    root = Path(root).resolve()
     updated, ref_compare = [], []
 
     def sift(lst):
         keep = []
         for f in lst:
-            kind = special_dir_kind(Path(f).parent.name)
+            parent = Path(f).resolve().parent
+            kind = None if parent == root else special_dir_kind(parent.name)
             if kind == "update":
                 updated.append(f)
             elif kind == "ref":
@@ -632,27 +649,29 @@ def _extract_special_dirs(classified, references, unclassified):
 
 
 def _gather_special_dir_files(stem_folder):
-    """(updated_files, ref_files) from any 'updated stems' / 'ref' subfolders of
-    a pack. Used by the multi-version path, which dispatches before
-    classify_stems runs, so it can wire those folders in rather than drop them."""
+    """(updated_files, ref_files) from any 'updated stems' / 'ref' subfolder at
+    ANY depth of a pack. Used by the multi-version path, which dispatches before
+    classify_stems runs, so it can wire those folders in rather than drop them —
+    including a REF/ nested inside a version subfolder."""
     from versions import special_dir_kind
+
+    def _audio_under(folder):
+        return [f for f in Path(folder).rglob("*")
+                if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+                and not f.name.startswith(".") and "__MACOSX" not in f.parts]
+
     updated, ref_compare = [], []
     folder = Path(stem_folder)
     if not folder.exists():
         return updated, ref_compare
-    for d in sorted(folder.iterdir()):
-        if not d.is_dir():
+    for d in sorted(p for p in folder.rglob("*") if p.is_dir()):
+        if d.name == "__MACOSX" or d.name.startswith("."):
             continue
         kind = special_dir_kind(d.name)
-        if kind is None:
-            continue
-        files = [f for f in sorted(d.iterdir())
-                 if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
-                 and not f.name.startswith(".")]
         if kind == "update":
-            updated += files
+            updated += _audio_under(d)
         elif kind == "ref":
-            ref_compare += files
+            ref_compare += _audio_under(d)
     return updated, ref_compare
 
 
@@ -735,15 +754,24 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     versions = detect_versions(stem_folder)
     if versions:
         # A multi-version pack can still carry 'ref'/'updated stems' subfolders —
-        # gather them so the multi-version builder wires them in too (they're not
-        # part of any version and would otherwise be silently dropped).
+        # gather them so the multi-version builder wires them in too.
         mv_updated, mv_refcompare = _gather_special_dir_files(stem_folder)
+        # Belt-and-braces: ANY audio in the pack not claimed by a version or a
+        # special folder (a top-level supplied master/ref, a name-token minority
+        # stem, a stray file) is a LEFTOVER — never drop it silently. It's wired
+        # in as a parked reference track and flagged for review.
+        claimed = {Path(f).resolve() for v in versions for f in v["files"]}
+        claimed |= {Path(f).resolve() for f in mv_updated + mv_refcompare}
+        all_audio = [f for f in Path(stem_folder).rglob("*")
+                     if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+                     and not f.name.startswith(".") and "__MACOSX" not in f.parts]
+        mv_leftovers = [f for f in all_audio if f.resolve() not in claimed]
         return build_multiversion_project(
             versions, artist, title, label, bpm, output_base, use_ml=use_ml,
             category_colors=category_colors,
             subgroup_categories=subgroup_categories,
             updated_files=mv_updated, refcompare_files=mv_refcompare,
-            project_name=project_name,
+            leftover_files=mv_leftovers, project_name=project_name,
         )
 
     if project_name is None:
@@ -769,7 +797,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     # Pull out 'updated stems' / 'ref' subfolders BEFORE anything else (parent
     # folder is intact here; WAV normalisation would stage them and lose it).
     updated_files, refcompare_files = _extract_special_dirs(
-        classified, references, unclassified)
+        classified, references, unclassified, stem_folder)
     # Names of every source stem, by stem (no extension — survives WAV
     # normalisation), so pre-seeded extras can be told apart from our own copies.
     # Includes the updated/ref-folder files too, so rebuilding into an existing
@@ -1259,7 +1287,8 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
 def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                                use_ml=True, category_colors=None,
                                subgroup_categories=None, updated_files=None,
-                               refcompare_files=None, project_name=None):
+                               refcompare_files=None, leftover_files=None,
+                               project_name=None):
     """Build a project from multiple versions (extended / radio edit / dub ...).
 
     Each element shares ONE track across versions; versions are laid out as
@@ -1273,15 +1302,18 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     audio_folder = project_folder / "Audio"
     updated_files = list(updated_files or [])
     refcompare_files = list(refcompare_files or [])
+    leftover_files = list(leftover_files or [])
     # Capture any pre-seeded master/reference in the target folder BEFORE copying
     # source stems in (same as the single-version path), so it's wired in below.
     preseeded = _find_preseeded_audio(project_folder, audio_folder)
     source_names = {Path(f).stem.lower() for v in versions for f in v["files"]}
-    source_names |= {Path(f).stem.lower() for f in updated_files + refcompare_files}
+    source_names |= {Path(f).stem.lower()
+                     for f in updated_files + refcompare_files + leftover_files}
     for sub in ("Audio", "Ableton Project Info", "MASTER RENDERS"):
         (project_folder / sub).mkdir(parents=True, exist_ok=True)
     updated_files, _sk = _ensure_wav_paths(updated_files, audio_folder / "_wav_staging")
     refcompare_files, _sk = _ensure_wav_paths(refcompare_files, audio_folder / "_wav_staging")
+    leftover_files, _sk = _ensure_wav_paths(leftover_files, audio_folder / "_wav_staging")
 
     def _safe(name):
         return re.sub(r'[\\/:*?"<>|]+', "_", name).strip() or "Version"
@@ -1324,6 +1356,8 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         print("\nBPM " + str(bpm) + " (from " + src.name + ")")
     bpm = float(bpm)
 
+    mv_skipped = []
+    mv_peak = None
     for p in pv:
         bounce_name = project_name + " " + p["vname"] + " FLAT REF.wav"
         bounce_path = p["vdir"] / bounce_name
@@ -1331,7 +1365,12 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
             summary = sum_stems_to_wav([s["file_path"] for s in p["mix"]], bounce_path)
             p["bounce_path"] = bounce_path
             p["bounce_rel"] = p["rel_prefix"] + bounce_name
+            mv_skipped += list(summary.get("skipped", []))
+            if mv_peak is None:
+                mv_peak = round(float(summary["peak"]), 3)   # primary version's peak
             print("  " + p["name"] + " flat bounce: " + str(summary["n_summed"]) + " stems")
+            if summary["skipped"]:
+                print("  WARNING skipped (sample-rate mismatch): " + ", ".join(summary["skipped"]))
         else:
             p["bounce_path"] = None
         max_end = 0.0
@@ -1360,7 +1399,10 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     bar_cursor = float(CLIP_START_BEATS)
     for k, p in enumerate(pv):
         fb_beats = (p["first_beat_sec"] / 60.0) * bpm
-        base_start = bar_cursor - fb_beats
+        # A long pre-kick intro can drive base_start below 0. Clamp the whole
+        # version offset (not each clip) so it stays internally in sync — the
+        # kick just lands a little later rather than the clips desyncing.
+        base_start = max(0.0, bar_cursor - fb_beats)
         offsets.append(base_start)
         locators.append((base_start, _version_label(k)))
         content_end = base_start + p["length_beats"]
@@ -1502,6 +1544,24 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                           "base_start_beat": offsets[0], "extra_clips": []})
         mv_updated_names.append(f.stem)
 
+    # Leftovers: any pack audio not claimed by a version or special folder. Never
+    # dropped — parked at the bottom as a muted red reference track (Ext. Out) so
+    # nothing is lost, and flagged for Sam to place. (Catches a top-level supplied
+    # master, a name-token minority stem, or a stray file.)
+    leftover_names = []
+    for f in leftover_files:
+        dest = audio_folder / f.name
+        if not dest.exists():
+            shutil.copy2(f, dest)
+        all_stems.append({"name": f.stem, "clip_name": f.stem,
+                          "category": "reference", "color": REF_TRACK_COLOR,
+                          "file_path": dest, "rel_path": "Audio/" + f.name,
+                          "regions": None, "muted": True,
+                          "base_start_beat": offsets[0], "extra_clips": []})
+        leftover_names.append(f.stem)
+    if leftover_names:
+        print("  leftover (parked, muted, review): " + ", ".join(leftover_names))
+
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template (" + str(len(all_stems)) + " tracks)...")
     patch_project(template_path=get_template_path(), output_path=als_path,
@@ -1532,9 +1592,12 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "references_preseeded": len(preseeded_refs),
         "updated_stems": [Path(f).stem for f in updated_files],
         "refcompare": [Path(f).stem for f in refcompare_files],
-        "flat_ref_peak": None,
-        "skipped": [],
-        "flags": _collect_flags(mv_updated_names, [], bpm_meta, bpm, []),
+        "flat_ref_peak": mv_peak,
+        "skipped": mv_skipped,
+        "flags": (_collect_flags(mv_updated_names, mv_skipped, bpm_meta, bpm, [])
+                  + ([str(len(leftover_names)) + " file(s) weren't matched to a "
+                      "version — parked muted at the bottom for you to place: "
+                      + ", ".join(leftover_names)] if leftover_names else [])),
         "multiversion": True,
         "versions": [p["name"] for p in pv],
     }

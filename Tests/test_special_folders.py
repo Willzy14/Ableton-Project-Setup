@@ -96,6 +96,44 @@ def test_end_to_end_special_folders():
     assert rep["multiversion"] is False
 
 
+def test_pack_named_like_update_folder_not_sifted():
+    # A pack folder named "…Fix You Stems" must NOT sift its root-level stems
+    # into muted A/B tracks — only true SUBfolders are special.
+    if not Path(get_template_path()).exists():
+        print("SKIP test_pack_named_like_update_folder (template not on this machine)")
+        return
+    tmp = Path(tempfile.mkdtemp(prefix="fixyou_"))
+    src = tmp / "Coldplay - Fix You Stems"
+    for nm, f in [("01_Kick", 60), ("02_Bass", 90), ("03_Synth", 440), ("04_Vox", 220)]:
+        _tone(src / (nm + ".wav"), f)
+    proj = build_project(src, "Coldplay", "Fix You", "Lab", bpm=124,
+                         output_base=tmp / "out", use_ml=False,
+                         project_name="Coldplay - Fix You [Lab]")
+    rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
+    assert rep["updated_stems"] == [], rep["updated_stems"]   # nothing wrongly sifted
+    assert rep["tracks_total"] >= 4
+
+
+def test_multiversion_leftover_top_ref_not_dropped():
+    # A multi-version pack with a lone top-level reference/master must NOT lose
+    # it — it's parked (flagged) as a reference track, never silently dropped.
+    if not Path(get_template_path()).exists():
+        print("SKIP test_multiversion_leftover (template not on this machine)")
+        return
+    tmp = Path(tempfile.mkdtemp(prefix="mvleft_"))
+    src = tmp / "pack"
+    for tok in ("Extended", "Radio"):
+        for nm, f in [("01_Kick", 60), ("02_Bass", 90), ("03_Synth", 440)]:
+            _tone(src / (tok + " Group Stems") / (nm + ".wav"), f)
+    _tone(src / "TrackName (Extended Ref).wav", 200)   # lone top-level ref
+    proj = build_project(src, "MV", "Leftover", "Lab", bpm=124,
+                         output_base=tmp / "out", use_ml=False,
+                         project_name="MV - Leftover [Lab]")
+    rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
+    assert rep["multiversion"] is True
+    assert any("weren't matched" in fl for fl in rep["flags"]), rep["flags"]
+
+
 def test_multiversion_pack_keeps_ref_folder():
     # A multi-version pack (Extended/Radio subfolders) that ALSO has a REF folder
     # must NOT drop the refs — they get wired onto a References track, key-mapped.

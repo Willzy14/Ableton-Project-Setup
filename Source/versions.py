@@ -24,7 +24,10 @@ AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a"}
 # build: a folder of UPDATED/revised stems (replacements to A/B against the
 # originals), or a REF folder of other artists' tracks (external references).
 # project_builder handles these specially; versions.py just skips them.
-_UPDATE_DIR_RE = re.compile(r"(?i)(updat|revis|replace|correct|amend|\bfix)")
+# Update/revised-stem folder names. Word-anchored so a song title like
+# "Fix You Stems" or "Amendment" is NOT mistaken for a revised-stems folder.
+_UPDATE_DIR_RE = re.compile(
+    r"(?i)\b(updat\w*|revis\w*|replacement|corrected|amended|new stems?|fixed stems?)\b")
 _REF_DIR_RE = re.compile(r"(?i)^ref(erence)?s?\b")
 # A file that reads as a reference/master/full-mix rather than a stem.
 _REFLIKE_RE = re.compile(
@@ -205,11 +208,6 @@ def detect_versions(stem_folder, mirror_threshold=0.5):
         # No real top-level stems: versions may live entirely in subfolders.
         return _detect_subfolder_versions(subdirs, mirror_threshold)
     top = stem_top
-
-    if not subdirs:
-        # Pure flat folder — versions may be distinguished by a name token
-        # (Get Right "S16" vs "S17 SHRT EDIT") rather than a subfolder.
-        return _detect_nametoken_versions(top, mirror_threshold)
 
     if not subdirs:
         # Pure flat folder — versions may be distinguished by a name token

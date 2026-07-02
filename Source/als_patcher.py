@@ -198,7 +198,11 @@ def _read_wav_header(wav_path):
                 data_size = chunk_size
                 break
             else:
-                f.seek(chunk_size, 1)
+                # RIFF chunks are word-aligned: an odd size has a trailing pad
+                # byte. Broadcast-WAV (bext/iXML/LIST) chunks from Pro Tools are
+                # often odd — without skipping the pad we'd land mid-chunk and
+                # read 'fmt '/'data' as garbage (stem silently reads as empty).
+                f.seek(chunk_size + (chunk_size & 1), 1)
     bytes_per_sample = bits_per_sample // 8
     n_frames = data_size // (n_channels * bytes_per_sample) if bytes_per_sample else 0
     return {
@@ -1125,7 +1129,7 @@ def insert_locators(lines, locators):
         return
     block = []
     for entry in locators:
-        time_beat, name = entry[0], entry[1]
+        time_beat, name = max(0.0, entry[0]), entry[1]   # never a negative marker
         key = entry[2] if len(entry) > 2 else None
         lid = _alloc_id()
         tval = ("%d" % round(time_beat)) if abs(time_beat - round(time_beat)) < 1e-6 else ("%.6f" % time_beat)
