@@ -1025,7 +1025,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                 shutil.copy2(f, dest)
             # FX (risers/uplifters build from near-silence) get a lead-in so
             # the ramp isn't trimmed; everything else trims tight at the front.
-            regions, peak_db = find_audio_regions(
+            regions, true_peak_db = find_audio_regions(
                 dest, head_sec=2.0 if cat == "fx" else 0.0, return_peak=True)
             stems.append({
                 "name": f.stem,
@@ -1034,12 +1034,14 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                 "file_path": dest,
                 "rel_path": "Audio/" + f.name,
                 "regions": regions,
-                "silent": peak_db < SILENCE_FLOOR_DB,
+                "silent": true_peak_db < SILENCE_FLOOR_DB,
             })
 
     # --- Empty/silent stems --------------------------------------------------
-    # A stem with no audio in it (peak below the silence floor) is moved to the
-    # very bottom and given its own colour so it's obviously a dead export.
+    # A stem with no audio in it (TRUE PEAK below the silence floor) is moved to
+    # the very bottom and given its own colour so it's obviously a dead export.
+    # True peak (not windowed RMS) so a quiet, sparse-but-real stem — a soft
+    # shaker — is kept as audio, not parked as dead.
     # Pulled out of the working layout and the flat-ref sum (it adds nothing).
     silent_tracks = []
     if any(s.get("silent") for s in stems):

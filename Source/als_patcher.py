@@ -223,7 +223,11 @@ def get_wav_info(wav_path):
 def _rms_windows_np(raw, n_ch, bps, is_float, window_frames):
     """Per-window RMS in dBFS via numpy (vectorised) — same values as the
     pure-Python loop, but C-level (fast, and dodges the 3.14 interpreter
-    miscompiling the per-sample Python loops). Returns a list of dB floats.
+    miscompiling the per-sample Python loops). Returns (rms_db_list,
+    true_peak_db): the per-window RMS floats plus the loudest single sample in
+    dBFS — used to decide whether a stem is truly empty. Transients survive the
+    true peak where a windowed RMS would average them away (a sparse but real
+    shaker is not silence).
     """
     if is_float and bps == 4:
         a = _np.frombuffer(raw, "<f4").astype(_np.float64)
@@ -239,10 +243,12 @@ def _rms_windows_np(raw, n_ch, bps, is_float, window_frames):
         v = _np.where(v >= 0x800000, v - 0x1000000, v)
         a = v.astype(_np.float64) / 8388608.0
     else:
-        return []
+        return [], -120.0
     ws = window_frames * n_ch
     if ws <= 0 or a.size == 0:
-        return []
+        return [], -120.0
+    peak = float(_np.max(_np.abs(a)))
+    peak_db = 20.0 * math.log10(peak) if peak > 0 else -120.0
     out = []
     nfull = a.size // ws
     if nfull:
@@ -254,14 +260,19 @@ def _rms_windows_np(raw, n_ch, bps, is_float, window_frames):
     if rem.size:
         r = float(_np.sqrt((rem * rem).mean()))
         out.append(20.0 * math.log10(r) if r > 0 else -120.0)
-    return out
+    return out, peak_db
 
 
 # Absolute floor (dB rel. full scale) below which a whole stem counts as having
-# no audio in it — an empty/silent export. find_audio_regions uses a RELATIVE
-# threshold (peak - headroom) so a silent file reads as one big region, not as
-# empty; this absolute peak floor is what flags a truly silent stem.
-SILENCE_FLOOR_DB = -60.0
+# no audio in it — an empty/silent export. Measured against the stem's TRUE PEAK
+# (loudest single sample), NOT a windowed RMS: a sparse-but-real element like a
+# quiet shaker has real transient peaks even though its window RMS averages down
+# near silence, so a windowed measure would wrongly park it as dead. A truly
+# empty export sits at digital silence / dither (<= -80 dB); -66 dB leaves clear
+# headroom for genuinely quiet content while still catching dead/hiss-only stems.
+# find_audio_regions itself uses a RELATIVE threshold (peak - headroom) for
+# region-finding; this absolute peak floor is only what flags a silent stem.
+SILENCE_FLOOR_DB = -66.0
 
 
 def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
@@ -275,8 +286,10 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
     small tail_sec safety margin catches the very end. Active windows separated
     by less than min_gap_sec are merged into one region (so a continuous groove
     stays one clip; real silence >min_gap splits into tight separate clips).
-    Returns a list of (start_sec, end_sec) tuples, or (regions, peak_rms_db) when
-    return_peak=True (peak window RMS in dB — below SILENCE_FLOOR_DB = silent).
+    Returns a list of (start_sec, end_sec) tuples, or (regions, true_peak_db)
+    when return_peak=True (loudest single sample in dB — below SILENCE_FLOOR_DB
+    means the stem is empty/dead; transients survive this where a windowed RMS
+    would not).
     """
     import struct as _struct
     import math as _math
@@ -292,6 +305,7 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
 
     window_frames = int(sr * window_sec)
     rms_values = None
+    true_peak_db = -120.0
 
     # Fast path: read all samples and compute per-window RMS in numpy.
     if _np is not None:
@@ -299,12 +313,14 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
             with open(str(wav_path), "rb") as f:
                 f.seek(hdr["data_offset"])
                 raw_all = f.read(n_frames * frame_bytes)
-            rms_values = _rms_windows_np(raw_all, n_ch, bps, is_float, window_frames)
+            rms_values, true_peak_db = _rms_windows_np(
+                raw_all, n_ch, bps, is_float, window_frames)
         except Exception:  # noqa: BLE001 — fall back to the stdlib loop
             rms_values = None
 
     if not rms_values:
         rms_values = []
+        peak_abs = 0.0            # loudest sample, full-scale (0..1)
         with open(str(wav_path), "rb") as f:
             f.seek(hdr["data_offset"])
             pos = 0
@@ -317,19 +333,27 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
                     floats = _struct.unpack("<" + "f" * (len(raw) // 4), raw)
                     sum_sq = sum(v * v for v in floats)
                     n_samples = len(floats)
+                    if floats:
+                        peak_abs = max(peak_abs, max(abs(v) for v in floats))
                 elif bps == 3:
                     sum_sq = 0.0
                     n_samples = 0
+                    win_peak = 0
                     for k in range(0, len(raw) - 2, 3):
                         v = raw[k] | (raw[k + 1] << 8) | (raw[k + 2] << 16)
                         if v >= 0x800000:
                             v -= 0x1000000
                         sum_sq += v * v
                         n_samples += 1
+                        if abs(v) > win_peak:
+                            win_peak = abs(v)
+                    peak_abs = max(peak_abs, win_peak / 8388608.0)
                 elif bps == 2:
                     shorts = _struct.unpack("<" + "h" * (len(raw) // 2), raw)
                     sum_sq = sum(v * v for v in shorts)
                     n_samples = len(shorts)
+                    if shorts:
+                        peak_abs = max(peak_abs, max(abs(v) for v in shorts) / 32768.0)
                 else:
                     n_samples = 0
                     sum_sq = 0.0
@@ -345,6 +369,7 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
                     rms_db = -120.0
                 rms_values.append(rms_db)
                 pos += window_frames
+        true_peak_db = 20 * _math.log10(peak_abs) if peak_abs > 0 else -120.0
 
     peak_rms = max(rms_values) if rms_values else -120.0
     threshold_db = peak_rms - headroom_db
@@ -393,7 +418,7 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
             regions = padded
         result = regions
 
-    return (result, peak_rms) if return_peak else result
+    return (result, true_peak_db) if return_peak else result
 
 
 def _build_clip_xml(stem_name, clip_color, rel_path, abs_path, sample_count,
