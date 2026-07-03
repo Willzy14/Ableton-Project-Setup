@@ -29,7 +29,7 @@ def run_job(job):
         print("Preparing stems...", flush=True)
         stem_folder = E.prepare_stem_folder(job["paths"], tmp / "stems")
         artist, ttl, label = E.parse_project_name(job["title"])
-        from project_builder import build_project
+        from project_builder import build_project, session_report_path
         from validate_project import validate_path
 
         folder = build_project(
@@ -46,7 +46,7 @@ def run_job(job):
         als = next(folder.glob("*.als"), None)
         v = validate_path(als) if als else None
         report = None
-        rp = folder / "Session Report.json"
+        rp = session_report_path(folder)
         if rp.exists():
             try:
                 report = json.loads(rp.read_text(encoding="utf-8"))

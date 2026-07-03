@@ -571,11 +571,37 @@ def _collect_flags(unmatched_updated, skipped, bpm_meta, bpm, silent_tracks):
     return flags
 
 
+REPORTS_DIRNAME = "Reports"
+
+
+def _reports_dir(project_folder):
+    """Tool-generated reports live in a dedicated 'Reports/' subfolder so the
+    project root stays tidy — just the .als, Audio/, and the DAW's own folders."""
+    d = Path(project_folder) / REPORTS_DIRNAME
+    try:
+        d.mkdir(exist_ok=True)
+    except Exception:  # noqa: BLE001 — reporting must never fail a good build
+        pass
+    return d
+
+
+def session_report_path(project_folder):
+    """Resolve the machine-readable build report (the Studio App reads this to
+    draw its Result Card). Prefers Reports/ but falls back to the project root so
+    older builds still resolve."""
+    project_folder = Path(project_folder)
+    new = project_folder / REPORTS_DIRNAME / "Session Report.json"
+    old = project_folder / "Session Report.json"
+    return old if old.exists() and not new.exists() else new
+
+
 def _write_session_report(project_folder, report):
     """Write the machine-readable Session Report.json (the Studio App reads it to
-    show a build Result Card) plus a short human-readable Session Report.txt."""
+    show a build Result Card) plus a short human-readable Session Report.txt.
+    Both live in the Reports/ subfolder to keep the project root tidy."""
+    rdir = _reports_dir(project_folder)
     try:
-        with open(project_folder / "Session Report.json", "w", encoding="utf-8") as fh:
+        with open(rdir / "Session Report.json", "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=2)
     except Exception:  # noqa: BLE001 — reporting must never fail a good build
         pass
@@ -605,7 +631,7 @@ def _write_session_report(project_folder, report):
         if report.get("skipped"):
             lines.append("Skipped (unreadable / SR mismatch): " + ", ".join(report["skipped"]))
         lines.append("Flat-ref peak: " + str(report.get("flat_ref_peak", "?")))
-        with open(project_folder / "Session Report.txt", "w", encoding="utf-8") as fh:
+        with open(rdir / "Session Report.txt", "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines))
     except Exception:  # noqa: BLE001
         pass
@@ -943,13 +969,13 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             rec = ml_results.get(f)
             cat = (rec.get("category") if rec else None) or "music"
             classified.setdefault(cat, []).append(f)
-        _write_ml_report(project_folder / "ML Classification Report.txt",
+        _write_ml_report(_reports_dir(project_folder) / "ML Classification Report.txt",
                          unclassified, ml_results)
         if use_ml:
             n_ml = sum(1 for f in unclassified
                        if ml_results.get(f) and ml_results[f].get("category"))
             print("  audio-classified " + str(n_ml) + "/" + str(len(unclassified))
-                  + " stems -> see 'ML Classification Report.txt'")
+                  + " stems -> see 'Reports/ML Classification Report.txt'")
         unclassified = []
 
     bpm_meta = None
@@ -1416,7 +1442,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         vname = _safe(v["name"])
         rel_prefix = "Audio/" + vname + "/"
         print("\n[" + v["name"] + "] processing " + str(len(v["files"])) + " files...")
-        report_path = project_folder / ("ML Classification Report - " + vname + ".txt")
+        report_path = _reports_dir(project_folder) / ("ML Classification Report - " + vname + ".txt")
         mix, refs, buses = _process_version_files(
             v["files"], audio_folder / vname, rel_prefix,
             use_ml=use_ml, ml_report_path=report_path,

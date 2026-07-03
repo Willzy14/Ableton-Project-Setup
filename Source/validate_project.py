@@ -238,7 +238,9 @@ def validate_path(path: str | Path, expected_tempo: float | None = None) -> Vali
             if not ref.exists():
                 result.errors.append(f"missing audio file for {track.name}: {ref}")
 
-    report_path = result.project_dir / "ML Classification Report.txt"
+    report_path = result.project_dir / "Reports" / "ML Classification Report.txt"
+    if not report_path.exists():
+        report_path = result.project_dir / "ML Classification Report.txt"   # older builds
     if not report_path.exists():
         result.warnings.append("ML Classification Report.txt not found")
 

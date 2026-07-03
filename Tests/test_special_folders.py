@@ -90,7 +90,7 @@ def test_end_to_end_special_folders():
             for ln in lines if "PersistentKeyString" in ln]
     assert keys == ["1", "2"], "ref locators not key-mapped 1..N: " + str(keys)
 
-    rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
+    rep = json.loads((Path(proj) / "Reports" / "Session Report.json").read_text(encoding="utf-8"))
     assert sorted(rep["updated_stems"]) == ["Sample Bass", "Sub Bass"], rep["updated_stems"]
     assert len(rep["refcompare"]) == 2, rep["refcompare"]
     assert rep["multiversion"] is False
@@ -109,7 +109,7 @@ def test_pack_named_like_update_folder_not_sifted():
     proj = build_project(src, "Coldplay", "Fix You", "Lab", bpm=124,
                          output_base=tmp / "out", use_ml=False,
                          project_name="Coldplay - Fix You [Lab]")
-    rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
+    rep = json.loads((Path(proj) / "Reports" / "Session Report.json").read_text(encoding="utf-8"))
     assert rep["updated_stems"] == [], rep["updated_stems"]   # nothing wrongly sifted
     assert rep["tracks_total"] >= 4
 
@@ -129,7 +129,7 @@ def test_multiversion_leftover_top_ref_not_dropped():
     proj = build_project(src, "MV", "Leftover", "Lab", bpm=124,
                          output_base=tmp / "out", use_ml=False,
                          project_name="MV - Leftover [Lab]")
-    rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
+    rep = json.loads((Path(proj) / "Reports" / "Session Report.json").read_text(encoding="utf-8"))
     assert rep["multiversion"] is True
     assert any("weren't matched" in fl for fl in rep["flags"]), rep["flags"]
 
@@ -151,7 +151,7 @@ def test_multiversion_pack_keeps_ref_folder():
     proj = build_project(src, "MV", "RefKeep", "Lab", bpm=124,
                          output_base=tmp / "out", use_ml=False,
                          project_name="MV - RefKeep [Lab]")
-    rep = json.loads((Path(proj) / "Session Report.json").read_text(encoding="utf-8"))
+    rep = json.loads((Path(proj) / "Reports" / "Session Report.json").read_text(encoding="utf-8"))
     assert rep["multiversion"] is True
     assert len(rep["refcompare"]) == 2, rep["refcompare"]
     lines = decompress_als(next(Path(proj).glob("*.als")))

@@ -27,7 +27,7 @@ SOURCE_DIR = REPO_DIR / "Source"
 sys.path.insert(0, str(SOURCE_DIR))
 
 from project_builder import (build_project, get_output_base,  # noqa: E402
-                             SUBGROUP_CATEGORIES)
+                             SUBGROUP_CATEGORIES, session_report_path)
 from stem_classifier import CATEGORIES, AUDIO_EXTENSIONS    # noqa: E402
 from validate_project import validate_path                 # noqa: E402
 
@@ -584,7 +584,7 @@ class Api:
             return {"ok": True, "folder": str(folder),
                     "als": str(als) if als else "",
                     "validated": bool(v and v.ok),
-                    "report": _read_json(folder / "Session Report.json", None)}
+                    "report": _read_json(session_report_path(folder), None)}
         except Exception as exc:  # noqa: BLE001 — one bad pack must not kill the batch
             return {"ok": False, "error": str(exc), "trace": traceback.format_exc()}
         finally:

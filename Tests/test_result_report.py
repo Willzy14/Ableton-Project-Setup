@@ -69,8 +69,10 @@ def test_build_writes_session_report():
     _tone(src / "04_Pad.wav", f=300)
     proj = build_project(src, "Test", "Report", "Lab", bpm=124,
                          output_base=tmp / "out", use_ml=False)
-    rep_path = Path(proj) / "Session Report.json"
-    assert rep_path.exists(), "Session Report.json not written"
+    rep_path = Path(proj) / "Reports" / "Session Report.json"
+    assert rep_path.exists(), "Session Report.json not written into Reports/"
+    # tidy root: the report lives in Reports/, not loose at the project root
+    assert not (Path(proj) / "Session Report.json").exists()
     rep = json.loads(rep_path.read_text(encoding="utf-8"))
     for key in ("bpm", "tracks_total", "categories", "groups", "flat_ref_peak",
                 "als_name", "references_supplied"):
@@ -78,8 +80,8 @@ def test_build_writes_session_report():
     assert rep["bpm"] == 124.0
     assert rep["categories"].get("music") == 2      # Synth + Pad
     assert rep["tracks_total"] >= 4
-    # A human-readable copy is written too.
-    assert (Path(proj) / "Session Report.txt").exists()
+    # A human-readable copy is written too, alongside it in Reports/.
+    assert (Path(proj) / "Reports" / "Session Report.txt").exists()
 
     # The built folder gets the Ableton project icon (Desktop.ini + AProject.ico).
     assert (Path(proj) / "Desktop.ini").exists()
