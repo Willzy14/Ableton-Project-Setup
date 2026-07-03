@@ -3,9 +3,10 @@
 Each stem gets assigned a category which determines its track position,
 colour, and grouping in the Ableton project.
 
-Priority order (most specific first): reference > kick > sends > vocals >
-bass > music > fx > drums. This ensures compound names like "BREAK CHORDS"
-land in music (chord) not drums (break).
+Priority order (most specific first): kick > sends > vocals > strong-fx >
+bass > music > drums > fx > reference. This ensures compound names like
+"BREAK CHORDS" land in music (chord) not drums (break), and transition FX
+like "Sub Drop" land in fx (not bass, which "sub" would otherwise grab).
 """
 import re
 from pathlib import Path
@@ -104,6 +105,11 @@ MUSIC_PATTERNS = [
     r"\bclavinet",
     r"\bsine\b",
     r"\bsounds?\b",
+    r"\bsax",            # sax / saxophone
+    r"\btrumpet",
+    r"\btrombone",
+    r"\bwhistle",
+    r"\briff",           # a riff is an instrumental melodic line
 ]
 
 VOCAL_PATTERNS = [
@@ -126,6 +132,8 @@ VOCAL_PATTERNS = [
     # NB: "chop"/"chops" is NOT here — it's ambiguous (Piano Chops / Synth Chops
     # are instrumental and very common in house). A genuine vocal chop still
     # matches via "vox"/"vocal" in its name; a bare "Chops" falls to music.
+    # "hook" and "topline" are handled in _score_category (weak, guarded vocal
+    # signals — a named instrument overrides them; see there).
 ]
 
 FX_PATTERNS = [
@@ -146,6 +154,20 @@ FX_PATTERNS = [
     r"\bwhoosh",
     r"\bbuild\b",
     r"\bhit\b",
+]
+
+# Transition effects that must OUTRANK bass/music — a "Sub Drop" is an FX sub
+# drop, not a bass instrument ("sub" would otherwise send it to bass); a
+# "Downer" or "Synth Riser" is a transition FX, not a synth. Checked before
+# bass/music in _score_category. Kept deliberately unambiguous.
+FX_STRONG_PATTERNS = [
+    r"\bdowner",
+    r"\bsub.?drop",
+    r"\briser",
+    r"\buplift(er)?\b",     # uplift / uplifter — NOT "uplifting" (an adjective)
+    r"\bdownlift(er)?\b",
+    r"\bwhoosh",
+    r"\bswoosh",
 ]
 
 SEND_PATTERNS = [
@@ -215,10 +237,12 @@ WORD_MAP = {
     "marimba": "Marimba", "chime": "Chime", "rhodes": "Rhodes",
     "vocal": "Vocal", "vocals": "Vocal", "vox": "Vox", "voice": "Vocal",
     "lv": "LV", "bgv": "BGV", "backing": "Backing",
-    "choir": "Choir", "stacks": "Stacks",
+    "choir": "Choir", "stacks": "Stacks", "hook": "Hook", "topline": "Topline",
     "fx": "FX", "sfx": "FX",
     "riser": "Riser", "impact": "Impact", "sweep": "Sweep",
     "noise": "Noise", "texture": "Texture",
+    "downer": "Downer", "drop": "Drop", "uplifter": "Uplifter",
+    "downlifter": "Downlifter", "whoosh": "Whoosh", "swoosh": "Swoosh",
 }
 
 
@@ -229,8 +253,9 @@ def _matches_any(name_lower, patterns):
 def _score_category(name):
     """Return (category, is_reference) using priority-ordered matching.
 
-    Order: reference > kick > sends > vocals > bass > music > fx > drums.
-    More specific categories checked first so compound names resolve correctly.
+    Order: kick > sends > vocals > strong-fx > bass > music > drums > fx >
+    reference. More specific categories checked first so compound names resolve
+    correctly.
     """
     has_kick = _matches_any(name, KICK_PATTERNS)
     has_bass = _matches_any(name, BASS_PATTERNS)
@@ -238,7 +263,23 @@ def _score_category(name):
     has_vocals = _matches_any(name, VOCAL_PATTERNS)
     has_music = _matches_any(name, MUSIC_PATTERNS)
     has_fx = _matches_any(name, FX_PATTERNS)
+    has_strong_fx = _matches_any(name, FX_STRONG_PATTERNS)
     has_drums = _matches_any(name, DRUMS_PATTERNS)
+
+    # "Hook" and "topline" are weak vocal signals — a hook/topline is usually the
+    # vocal part (Hook Main, Hook BG, Hook Low, Hook Response, Hook V2, Topline).
+    # They only read as vocals when no real instrument/percussion/FX claims the
+    # name. Strip the hook/topline words first (their own "top" would otherwise
+    # trip the drums 'tops' pattern) and see if anything else claims what's left:
+    # "Guitar Topline"/"Synth Hook" keep their instrument, "Hook Riser" stays FX.
+    if re.search(r"\bhook|\btop.?line", name):
+        residual = re.sub(r"\bhook|\btop.?line", " ", name)
+        if not (_matches_any(residual, MUSIC_PATTERNS)
+                or _matches_any(residual, BASS_PATTERNS)
+                or _matches_any(residual, DRUMS_PATTERNS)
+                or _matches_any(residual, KICK_PATTERNS)
+                or _matches_any(residual, FX_STRONG_PATTERNS)):
+            has_vocals = True
 
     if has_kick and not has_bass:
         return "kick", False
@@ -248,6 +289,9 @@ def _score_category(name):
 
     if has_vocals:
         return "vocals", False
+
+    if has_strong_fx:
+        return "fx", False
 
     if has_bass:
         return "bass", False
