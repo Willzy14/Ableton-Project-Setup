@@ -81,6 +81,12 @@ def test_build_writes_session_report():
     # A human-readable copy is written too.
     assert (Path(proj) / "Session Report.txt").exists()
 
+    # The built folder gets the Ableton project icon (Desktop.ini + AProject.ico).
+    assert (Path(proj) / "Desktop.ini").exists()
+    ini = (Path(proj) / "Desktop.ini").read_text(encoding="ascii")
+    assert "IconFile=Ableton Project Info" in ini
+    assert (Path(proj) / "Ableton Project Info" / "AProject.ico").exists()
+
 
 if __name__ == "__main__":
     import traceback

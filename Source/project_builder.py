@@ -757,6 +757,55 @@ def _apply_subgroups(stems, scope):
     return out
 
 
+_ABLETON_ICON = "AProject.ico"
+
+
+def _ableton_icon_source():
+    """The bundled Ableton project icon (frozen EXE bundle, else repo Assets/)."""
+    if getattr(sys, "frozen", False):
+        cand = Path(getattr(sys, "_MEIPASS", "")) / _ABLETON_ICON
+        if cand.exists():
+            return cand
+    return Path(__file__).resolve().parents[1] / "Assets" / _ABLETON_ICON
+
+
+def apply_ableton_folder_icon(project_folder):
+    """Give a project folder the Ableton project icon (like a native Ableton
+    project) — copy AProject.ico into 'Ableton Project Info/', write Desktop.ini,
+    and set the folder read-only so Explorer honours it. Windows-only; wrapped so
+    a cosmetic icon can never fail (or block) a build. Idempotent (safe to redo
+    on a rebuild)."""
+    try:
+        project_folder = Path(project_folder)
+        info = project_folder / "Ableton Project Info"
+        info.mkdir(parents=True, exist_ok=True)
+        src = _ableton_icon_source()
+        if src.exists():
+            shutil.copy2(src, info / _ABLETON_ICON)
+        ini_path = project_folder / "Desktop.ini"
+        _win_set_attrs(ini_path, 0x80)   # NORMAL first, so we can overwrite it
+        ini_path.write_text(
+            "[.ShellClassInfo]\r\nConfirmFileOp=0\r\nNoSharing=0\r\n"
+            "IconFile=Ableton Project Info\\" + _ABLETON_ICON + "\r\nIconIndex=0\r\n",
+            encoding="ascii")
+        _win_set_attrs(ini_path, 0x02 | 0x04)          # HIDDEN | SYSTEM
+        _win_set_attrs(project_folder, None, add=0x01)  # folder READONLY
+    except Exception:  # noqa: BLE001 — the icon is cosmetic; never fail the build
+        pass
+
+
+def _win_set_attrs(path, value, add=None):
+    """Set (value) or OR-in (add) Windows file attributes. No-op off Windows."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    k = ctypes.windll.kernel32
+    if add is not None:
+        cur = k.GetFileAttributesW(str(path))
+        value = (0 if cur in (-1, 0xFFFFFFFF) else cur) | add
+    k.SetFileAttributesW(str(path), value)
+
+
 def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                   use_ml=None, project_name=None, category_colors=None,
                   subgroup_categories=None):
@@ -1241,6 +1290,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "multiversion": False,
     }
     _write_session_report(project_folder, report)
+    apply_ableton_folder_icon(project_folder)
 
     return project_folder
 
@@ -1643,6 +1693,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "versions": [p["name"] for p in pv],
     }
     _write_session_report(project_folder, report)
+    apply_ableton_folder_icon(project_folder)
     return project_folder
 
 

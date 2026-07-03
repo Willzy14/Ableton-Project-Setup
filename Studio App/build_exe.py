@@ -50,7 +50,10 @@ def main():
         (APP_DIR / "VERSION", "."),
         (APP_DIR / "update_feed.json", "."),
         (bundled_template, "."),
-        (REPO_DIR / "Config" / "project_builder.json", "Config"),
+        (REPO_DIR / "Assets" / "AProject.ico", "."),   # Ableton folder icon
+        # NB: the machine-specific Config/project_builder.json is NOT bundled —
+        # it holds absolute paths; the frozen app resolves template from the
+        # bundle and settings/output from %APPDATA% instead.
     ]
 
     args = [
