@@ -69,12 +69,12 @@ py -3.13 Source\validate_project.py "<project-folder-or-als>" --expect-tempo 160
 
 ## Important Modules
 
-- `Source/project_builder.py` - Orchestrates folder scan, classification, BPM detection, project folder creation, flat-ref bounce, and ALS patching.
+- `Source/project_builder.py` - Orchestrates folder scan, classification, BPM detection, project folder creation, flat-ref bounce, ALS patching, and the Ableton folder icon (`apply_ableton_folder_icon`). Reports (Session Report + ML Classification Report) write into a `Reports/` subfolder via `_reports_dir()`; `session_report_path()` resolves it for readers (falls back to the project root for older builds).
 - `Config/project_builder.json` - Local defaults for template path, output base, ML interpreter, and ML enablement. Environment variables override it.
-- `Source/stem_classifier.py` - Filename-based stem classification and display track-name generation. Also `find_dry_stems()` — detects explicit WET+DRY vocal pairs (used vocals-only by the builder) so the dry copy can be parked.
+- `Source/stem_classifier.py` - Filename-based stem classification and display track-name generation. Also `find_dry_stems()` — detects explicit WET+DRY vocal pairs (used vocals-only by the builder) so the dry copy can be parked. `FX_STRONG_PATTERNS` (downer/sub-drop/riser/uplifter) outranks bass/music; `hook`/`topline` are guarded weak vocal signals (a real instrument name overrides them) — see 2026-07-02 fix.
 - `Source/audio_ml_classify.py` - Heavy second-stage audio classifier for unnamed stems; uses Demucs and Whisper when installed.
 - `Source/stem_analysis.py` - Lightweight numpy audio analysis for full-mix and group-bus detection.
-- `Source/als_patcher.py` - Raw-text ALS patching engine. Do not replace with XML parsing. `find_audio_regions(return_peak=True)` also returns peak window RMS (silence floor `SILENCE_FLOOR_DB`); group runs support per-run muted/unfolded/colour (used by the parked "Dry" group).
+- `Source/als_patcher.py` - Raw-text ALS patching engine. Do not replace with XML parsing. `find_audio_regions(return_peak=True)` returns TRUE PEAK (not windowed RMS, since 2026-07-02 — a sparse stem like a quiet shaker needs true peak to not be false-flagged as silent); silence floor `SILENCE_FLOOR_DB = -66 dBFS`. Group runs support per-run muted/unfolded/colour (used by the parked "Dry" group).
 - `Source/bounce.py` - Flat-reference WAV summing, numpy fast path plus stdlib fallback.
 - `Source/versions.py` - Multi-version package detection.
 
