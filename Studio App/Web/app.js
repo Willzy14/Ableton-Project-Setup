@@ -184,7 +184,7 @@ function wireGlobalButtons() {
   $("updateBtn").onclick = checkForUpdate;
   $("closeColours").onclick = () => $("coloursModal").classList.add("hidden");
   $("changeFolderBtn").onclick = changeFolder;
-  $("goBtn").onclick = runBatch;
+  $("goBtn").onclick = () => runBatch();
   $("saveProfileBtn").onclick = saveProfile;
   $("newProfileBtn").onclick = newProfile;
   $("deleteProfileBtn").onclick = deleteProfile;
@@ -298,6 +298,8 @@ function renderCard(proj) {
   if (finished && st.report && (state === "done" || state === "warn")) {
     // ── Result inline, in place of the profile+BPM row ──
     fields.appendChild(resultEl(st.report));
+    // Opened it and the tempo's wrong? Type the real one and re-do this project.
+    fields.appendChild(tempoFixEl(proj, st.report));
   } else if (finished && state === "failed") {
     fields.appendChild(failEl(proj, st));
   } else if (busy) {
@@ -614,12 +616,15 @@ async function deleteProfile() {
   renderPreview();
 }
 
-/* ---- batch build ---- */
-async function runBatch() {
+/* ---- batch build ----
+   only: an explicit list of projects to build (used by a single-card rebuild at
+   a corrected tempo). Omitted → build every ready, statusless card ("Build all"). */
+async function runBatch(only) {
   const a = api();
-  // Only cards that are ready AND not already showing a result get re-built.
-  const ready = State.projects.filter(
-    (p) => p.paths.length && p.title.trim() && !p.status);
+  const ready = Array.isArray(only) && only.length
+    ? only
+    // Only cards that are ready AND not already showing a result get re-built.
+    : State.projects.filter((p) => p.paths.length && p.title.trim() && !p.status);
   if (!ready.length) return;
   const payload = ready.map((p) => ({
     paths: p.paths, title: p.title.trim(), profile: p.profile, bpm: p.bpm || null,
@@ -701,9 +706,8 @@ function resultBody(r) {
       : escapeHtml(g.name)).join(" &nbsp;·&nbsp; ");
   const pills = [];
   if (r.bpm != null) {
-    const conf = r.bpm_source === "filename" ? "from filename"
-      : r.bpm_source ? `${r.bpm_inliers}/${r.bpm_onsets} on grid` : "manual";
-    pills.push(`<span class="rc-pill">${Math.round(r.bpm)} BPM · ${conf}</span>`);
+    // Show the exact tempo — a genuine 125.5 must not read as 126.
+    pills.push(`<span class="rc-pill">${fmtBpm(r.bpm)} BPM · ${bpmConf(r)}</span>`);
   }
   pills.push(`<span class="rc-pill">${r.tracks_total} tracks</span>`);
   if (r.multiversion && r.versions) pills.push(`<span class="rc-pill">${r.versions.length} versions</span>`);
@@ -737,6 +741,65 @@ function resultEl(report) {
   const el = document.createElement("div");
   el.innerHTML = resultBody(report);
   return el.firstElementChild;
+}
+
+/* Show a tempo as the project actually holds it: '128' whole, '125.5' half. */
+function fmtBpm(bpm) {
+  const b = Number(bpm);
+  return Number.isInteger(b) ? String(b) : String(Math.round(b * 100) / 100);
+}
+
+/* Human label for where the built tempo came from (engine bpm_source). */
+function bpmConf(r) {
+  const s = r.bpm_source || "";
+  if (!s) return "manual";
+  if (s.indexOf("filename (audio-confirmed") === 0) return "filename ✓ audio";
+  if (s.indexOf("filename (unverified") === 0) return "filename — unverified";
+  if (s.indexOf("audio (overrode") === 0) return "audio ✓ (label was off)";
+  if (r.bpm_inliers != null && r.bpm_onsets != null) return `${r.bpm_inliers}/${r.bpm_onsets} on grid`;
+  return escapeHtml(s);
+}
+
+/* "Wrong tempo? type the real one and rebuild" — shown under a finished result.
+   The engine already honours an explicit BPM (incl. a half like 125.5); this just
+   re-queues THIS project at the corrected tempo, overwriting its .als. */
+function tempoFixEl(proj, report) {
+  const wrap = document.createElement("div");
+  wrap.className = "rc-tempofix";
+  const lab = document.createElement("span");
+  lab.className = "rc-tf-lab";
+  lab.textContent = "Wrong tempo? Re-do at";
+  const input = document.createElement("input");
+  input.className = "input rc-tf-input";
+  input.type = "text";
+  input.value = report && report.bpm != null ? fmtBpm(report.bpm) : "";
+  input.placeholder = "e.g. 125.5";
+  input.title = "Type the real tempo (e.g. 125.5) and rebuild this project";
+  const btn = document.createElement("button");
+  btn.className = "btn tiny";
+  btn.textContent = "↻ Rebuild";
+  const go = () => {
+    const v = parseFloat(String(input.value).trim());
+    if (!(v >= 40 && v <= 300)) {
+      toast("Enter a real tempo, e.g. 125.5 (40–300).", "warn");
+      return;
+    }
+    rebuildAt(proj, v);
+  };
+  btn.onclick = go;
+  input.onkeydown = (e) => { if (e.key === "Enter") go(); };
+  wrap.append(lab, input, btn);
+  return wrap;
+}
+
+/* Re-queue a single finished project at an explicit tempo and rebuild just it. */
+function rebuildAt(proj, bpmValue) {
+  if (State.batchRunning) { toast("Wait for the current build to finish.", "warn"); return; }
+  if (!api()) { toast("Rebuilding runs in the app window.", "warn"); return; }
+  proj.bpm = String(bpmValue);
+  proj.status = null;                 // back to buildable so runBatch will take it
+  renderQueue();
+  runBatch([proj]);                   // scoped: this project only
 }
 
 async function openProjectAls(als) {
