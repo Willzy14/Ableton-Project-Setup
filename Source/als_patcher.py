@@ -7,6 +7,7 @@ import gzip
 import math
 import re
 import os
+import time
 from pathlib import Path
 
 try:
@@ -41,11 +42,34 @@ def decompress_als(als_path):
 
 
 def compress_als(lines, output_path):
-    content = "".join(lines)
-    raw_bytes = content.encode("utf-8")
-    with gzip.open(output_path, "wb") as f:
-        f.write(raw_bytes)
-    return output_path
+    """Write the .als atomically and lock-tolerantly.
+
+    Gzip is stream-based, so a write aborted mid-stream (a Dropbox sync or AV scan
+    briefly locking the file) would leave a CORRUPT .als on disk that Ableton
+    can't open. Write to a temp file in the SAME folder, then os.replace onto the
+    target (atomic on one volume), retrying a transient lock — so the user never
+    sees a half-written .als. Mirrors bounce.py's Dropbox-lock retry.
+    """
+    output_path = Path(output_path)
+    raw_bytes = "".join(lines).encode("utf-8")
+    tmp = output_path.with_name(output_path.name + ".tmp")
+    last_err = None
+    for _ in range(8):
+        try:
+            with gzip.open(tmp, "wb") as f:
+                f.write(raw_bytes)
+            os.replace(tmp, output_path)     # atomic on the same volume
+            return output_path
+        except PermissionError as e:         # Dropbox/AV lock — back off and retry
+            last_err = e
+            time.sleep(2.0)
+    try:
+        tmp.unlink()                         # never leave a stray temp behind
+    except OSError:
+        pass
+    raise PermissionError(
+        str(last_err) + " — the .als output stayed locked (Dropbox/AV may be "
+        "syncing it). Close it elsewhere or retry the build.")
 
 
 def find_track_ranges(lines):

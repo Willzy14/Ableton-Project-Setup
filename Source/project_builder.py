@@ -237,8 +237,18 @@ def _ensure_wav_paths(paths, staging_dir):
     return new, skipped
 
 
+def _skip_labels(skipped):
+    """(path, why) pairs -> 'name — why' strings for the report / flags."""
+    return [Path(pth).name + " — " + why for pth, why in skipped]
+
+
 def _normalize_audio_to_wav(classified, references, unclassified, staging_dir):
-    """Run _ensure_wav_paths across every classified/reference/unknown list."""
+    """Run _ensure_wav_paths across every classified/reference/unknown list.
+
+    Returns (classified, references, unclassified, skipped_labels) — the skipped
+    labels are surfaced in the session report + 'needs a look' flags so an
+    unreadable stem is never silently absent from the build.
+    """
     skipped = []
     for cat in list(classified.keys()):
         classified[cat], sk = _ensure_wav_paths(classified[cat], staging_dir)
@@ -253,7 +263,7 @@ def _normalize_audio_to_wav(classified, references, unclassified, staging_dir):
         print("\nWARNING — couldn't read these files, left OUT of the build:")
         for pth, why in skipped:
             print("  " + Path(pth).name + " — " + why)
-    return classified, references, unclassified
+    return classified, references, unclassified, _skip_labels(skipped)
 
 
 def _find_preseeded_audio(project_folder, audio_folder):
@@ -676,6 +686,23 @@ def _collect_flags(unmatched_updated, skipped, silent_tracks, bpm_flags=()):
     return flags
 
 
+def _validate_als_flags(als_path, expected_bpm=None):
+    """Parse the just-written .als and surface any structural problem (incl. a
+    tempo that didn't land) as a flag. A CLI build otherwise has NO safety net —
+    only the Studio App validated. Read-only ET parse; never fails a good build."""
+    try:
+        from validate_project import validate_path
+        result = validate_path(als_path, expected_bpm)
+        errs = list(getattr(result, "errors", []) or [])
+        if errs:
+            return ["The built project didn't fully validate: " + "; ".join(errs[:3])
+                    + (" (+" + str(len(errs) - 3) + " more)" if len(errs) > 3 else "")
+                    + " — open it in Ableton to check."]
+    except Exception:  # noqa: BLE001 — validation must never break a good build
+        pass
+    return []
+
+
 REPORTS_DIRNAME = "Reports"
 
 
@@ -1033,10 +1060,12 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     # up front, so every downstream reader (regions, BPM, bounce, analysis) only
     # ever sees WAV. Unreadable files are dropped with a warning, never crash.
     wav_staging = Path(tempfile.mkdtemp(prefix="als_wav_"))
-    classified, references, unclassified = _normalize_audio_to_wav(
+    classified, references, unclassified, pre_skipped = _normalize_audio_to_wav(
         classified, references, unclassified, wav_staging)
     updated_files, _sk = _ensure_wav_paths(updated_files, wav_staging)
+    pre_skipped += _skip_labels(_sk)
     refcompare_files, _sk = _ensure_wav_paths(refcompare_files, wav_staging)
+    pre_skipped += _skip_labels(_sk)
 
     # Audio-content safety net (numpy): a file filenames couldn't place
     # (music/unclassified) but that ANALYSES as a full mix / master / sub-bounce
@@ -1382,6 +1411,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         project_audio_dir=audio_folder,
         locators=ref_locators,
     )
+    als_flags = _validate_als_flags(als_path, float(bpm))
 
     print("\nProject created:")
     print("  Folder: " + str(project_folder))
@@ -1409,13 +1439,18 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "updated_stems": [Path(f).stem for f in updated_files],
         "refcompare": [Path(f).stem for f in refcompare_files],
         "flat_ref_peak": round(float(summary["peak"]), 3),
-        "skipped": list(summary.get("skipped", [])),
-        "flags": _collect_flags(unmatched_updated, summary.get("skipped", []),
-                                silent_tracks, bpm_flags),
+        "skipped": list(summary.get("skipped", [])) + pre_skipped,
+        "flags": _collect_flags(unmatched_updated,
+                                list(summary.get("skipped", [])) + pre_skipped,
+                                silent_tracks, bpm_flags) + als_flags,
         "multiversion": False,
     }
     _write_session_report(project_folder, report)
     apply_ableton_folder_icon(project_folder)
+
+    # The WAV-conversion scratch dir is done with — clean it up (it used to leak
+    # one OS-temp dir per build that had any non-WAV stems).
+    shutil.rmtree(wav_staging, ignore_errors=True)
 
     return project_folder
 
@@ -1441,7 +1476,7 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
             unclassified.append(f)
 
     # Normalise non-WAV audio to WAV before any analysis (same as single build).
-    classified, references, unclassified = _normalize_audio_to_wav(
+    classified, references, unclassified, v_skipped = _normalize_audio_to_wav(
         classified, references, unclassified, version_audio_dir / "_wav_staging")
 
     music = classified.get("music", [])
@@ -1497,7 +1532,7 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
         dest = _copy(f)
         ref_stems.append({"element_key": element_key(f), "orig_name": f.stem,
                           "file_path": dest, "rel_path": rel_prefix + f.name})
-    return mix_stems, ref_stems, bus_stems
+    return mix_stems, ref_stems, bus_stems, v_skipped
 
 
 def build_multiversion_project(versions, artist, title, label, bpm, output_base,
@@ -1527,9 +1562,13 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                      for f in updated_files + refcompare_files + leftover_files}
     for sub in ("Audio", "Ableton Project Info", "MASTER RENDERS"):
         (project_folder / sub).mkdir(parents=True, exist_ok=True)
+    mv_pre_skipped = []
     updated_files, _sk = _ensure_wav_paths(updated_files, audio_folder / "_wav_staging")
+    mv_pre_skipped += _skip_labels(_sk)
     refcompare_files, _sk = _ensure_wav_paths(refcompare_files, audio_folder / "_wav_staging")
+    mv_pre_skipped += _skip_labels(_sk)
     leftover_files, _sk = _ensure_wav_paths(leftover_files, audio_folder / "_wav_staging")
+    mv_pre_skipped += _skip_labels(_sk)
 
     def _safe(name):
         return re.sub(r'[\\/:*?"<>|]+', "_", name).strip() or "Version"
@@ -1542,11 +1581,12 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         rel_prefix = "Audio/" + vname + "/"
         print("\n[" + v["name"] + "] processing " + str(len(v["files"])) + " files...")
         report_path = _reports_dir(project_folder) / ("ML Classification Report - " + vname + ".txt")
-        mix, refs, buses = _process_version_files(
+        mix, refs, buses, v_skipped = _process_version_files(
             v["files"], audio_folder / vname, rel_prefix,
             use_ml=use_ml, ml_report_path=report_path,
             category_colors=category_colors,
         )
+        mv_pre_skipped += v_skipped
         print("  mix=" + str(len(mix)) + " refs=" + str(len(refs)) + " buses=" + str(len(buses)))
         pv.append({"name": v["name"], "vname": vname, "rel_prefix": rel_prefix,
                    "vdir": audio_folder / vname, "mix": mix, "refs": refs, "buses": buses})
@@ -1778,6 +1818,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     patch_project(template_path=get_template_path(), output_path=als_path,
                   stems=all_stems, bpm=bpm, project_audio_dir=audio_folder,
                   locators=locators)
+    als_flags = _validate_als_flags(als_path, float(bpm))
 
     bars = [str(int((locators[i][0] - CLIP_START_BEATS) / 4) + 33) for i in range(len(pv))]
     print("\nMulti-version project created: " + str(project_folder))
@@ -1804,8 +1845,9 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "updated_stems": [Path(f).stem for f in updated_files],
         "refcompare": [Path(f).stem for f in refcompare_files],
         "flat_ref_peak": mv_peak,
-        "skipped": mv_skipped,
-        "flags": (_collect_flags(mv_updated_names, mv_skipped, [], bpm_flags)
+        "skipped": mv_skipped + mv_pre_skipped,
+        "flags": (_collect_flags(mv_updated_names, mv_skipped + mv_pre_skipped, [], bpm_flags)
+                  + als_flags
                   + ([str(len(leftover_names)) + " file(s) weren't matched to a "
                       "version — parked muted at the bottom for you to place: "
                       + ", ".join(leftover_names)] if leftover_names else [])),
@@ -1814,6 +1856,13 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     }
     _write_session_report(project_folder, report)
     apply_ableton_folder_icon(project_folder)
+
+    # Remove the per-version WAV-conversion scratch dirs — these sit INSIDE the
+    # project's Audio/ (unlike the single-version OS-temp dir), so leaving them
+    # would clutter the delivered project and confuse a later rebuild's ref scan.
+    for st in audio_folder.rglob("_wav_staging"):
+        shutil.rmtree(st, ignore_errors=True)
+
     return project_folder
 
 

@@ -39,7 +39,7 @@ def test_multiversion_unknown_stems_use_ml_category():
         project_builder.find_audio_regions = lambda _path, head_sec=0.0: [(0.0, 1.0)]
         project_builder.find_group_buses = lambda _paths: []
         try:
-            mix, refs, buses = project_builder._process_version_files(
+            mix, refs, buses, _skipped = project_builder._process_version_files(
                 [source],
                 output_dir,
                 "Audio/Extended/",
@@ -79,7 +79,7 @@ def test_multiversion_unknown_stems_fall_back_to_music_when_ml_disabled():
         project_builder.find_audio_regions = lambda _path, head_sec=0.0: [(0.0, 1.0)]
         project_builder.find_group_buses = lambda _paths: []
         try:
-            mix, _refs, _buses = project_builder._process_version_files(
+            mix, _refs, _buses, _skipped = project_builder._process_version_files(
                 [source],
                 root / "Output Audio",
                 "Audio/Extended/",

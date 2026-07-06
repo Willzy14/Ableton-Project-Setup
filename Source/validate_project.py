@@ -10,7 +10,7 @@ import gzip
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 @dataclass
@@ -92,7 +92,10 @@ def _resolve_file_ref(project_dir: Path, file_ref: ET.Element) -> Path | None:
 
     relative = _value(file_ref.find("./RelativePath"))
     if relative:
-        return project_dir / Path(relative.replace("/", "\\"))
+        # Ableton stores the relative ref with "/" separators — join by parts so
+        # it resolves on both Windows and macOS (a literal "\" would be one bogus
+        # component on macOS, giving a false "missing audio").
+        return project_dir.joinpath(*PurePosixPath(relative).parts)
 
     if absolute:
         return Path(absolute)
