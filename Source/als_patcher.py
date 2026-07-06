@@ -1089,12 +1089,23 @@ def clear_all_selections(lines):
             )
 
 
+def _fmt_tempo(bpm):
+    """Ableton stores tempo as a float. Write a whole tempo as '128' and a half
+    as '125.5' — never truncate a genuine half-BPM to an int (Sam: rare, but a
+    perfect .5 must survive into the project)."""
+    bpm = float(bpm)
+    if bpm == int(bpm):
+        return str(int(bpm))
+    return ("%.2f" % bpm).rstrip("0").rstrip(".")
+
+
 def set_global_tempo(lines, bpm):
     """Set the global tempo on the MainTrack.
 
     Updates both the Manual value and the tempo automation FloatEvent
     (PointeeId 8), which Ableton uses as the actual display tempo.
     """
+    tempo_str = _fmt_tempo(bpm)
     in_main = False
     in_tempo = False
     tempo_target_id = None
@@ -1107,7 +1118,7 @@ def set_global_tempo(lines, bpm):
         if in_main and in_tempo and "<Manual Value=" in line and not manual_done:
             lines[i] = re.sub(
                 r'Value="[^"]*"',
-                'Value="' + str(int(bpm)) + '"',
+                'Value="' + tempo_str + '"',
                 lines[i]
             )
             manual_done = True
@@ -1133,7 +1144,7 @@ def set_global_tempo(lines, bpm):
             if in_envelope and found_pointee and "<FloatEvent " in line and "63072000" in line:
                 lines[i] = re.sub(
                     r'Value="[^"]*"(\s*/>)',
-                    'Value="' + str(int(bpm)) + '"\\1',
+                    'Value="' + tempo_str + '"\\1',
                     lines[i]
                 )
                 return

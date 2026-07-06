@@ -279,13 +279,15 @@ def _find_preseeded_audio(project_folder, audio_folder):
 
 
 def _bpm_from_filenames(paths):
-    """Read a labelled BPM off the filenames (e.g. '…120BPM…'). Dance packs
-    almost always name it, and a labelled tempo is authoritative. Returns the
-    most-voted value in 60–200, or None."""
+    """Read a labelled BPM off the filenames (e.g. '…120BPM…', '…125.5 BPM…').
+    Dance packs almost always name it — but it's only a hint to grid-check against
+    the audio (see _resolve_project_bpm). Half-BPMs ('125.5') are kept, not
+    truncated. Returns the most-voted value in 60–200, or None."""
     votes = {}
     for p in paths:
-        for m in re.finditer(r"(?<!\d)(\d{2,3})\s*bpm\b", Path(p).stem, re.IGNORECASE):
-            v = int(m.group(1))
+        for m in re.finditer(r"(?<!\d)(\d{2,3}(?:\.\d)?)\s*bpm\b",
+                             Path(p).stem, re.IGNORECASE):
+            v = float(m.group(1))
             if 60 <= v <= 200:
                 votes[v] = votes.get(v, 0) + 1
     return float(max(votes, key=votes.get)) if votes else None
@@ -343,6 +345,118 @@ def detect_project_bpm(classified):
     for cat in ("music", "fx", "vocals"):
         extra.extend(classified.get(cat, []))
     return _best_bpm(scored + _score_bpm_candidates(extra))
+
+
+# A filename-labelled BPM (e.g. "…130BPM…") is only a HINT — producers mislabel
+# it (Sam hit a pack tagged 130 that was really 132). It must be grid-checked
+# against the actual audio, never trusted outright. See Key Decisions.
+BPM_AGREE_TOL = 0.6   # BPM; audio within this of the label = confirmed
+
+
+def _fmt_bpm(x):
+    """Whole tempos print as ints ('132'), halves keep one dp ('128.5')."""
+    x = float(x)
+    return str(int(x)) if x == int(x) else ("%.1f" % x)
+
+
+def _octave_align(value, anchor):
+    """Fold `value` to the ×/÷2 octave closest to `anchor`.
+
+    The filename BPM resolves octave ambiguity in the audio fit: if a kick locks
+    to 66 but the label says 132, that is the same tempo, not a conflict.
+    """
+    value = float(value)
+    anchor = float(anchor)
+    if value <= 0 or anchor <= 0:
+        return value
+    while value < anchor / 1.5:
+        value *= 2.0
+    while value > anchor * 1.5:
+        value /= 2.0
+    return value
+
+
+def _bpm_is_credible(result):
+    """Did the audio grid-lock cleanly enough to arbitrate the tempo?"""
+    if not result:
+        return False
+    n = max(result.get("n_onsets", 0), 1)
+    ratio = result.get("n_inliers", 0) / n
+    res = result.get("residual_ms")
+    res = 999.0 if res is None else float(res)
+    return ratio >= 0.5 and res <= 5.0
+
+
+def _audio_quality_flags(bpm, result, credible):
+    """Review notes for an audio-derived BPM (low-confidence / half-double)."""
+    flags = []
+    b = int(round(float(bpm)))
+    res = result.get("residual_ms") if result else None
+    if not credible or res is None or res > 5.0:
+        flags.append("Auto-BPM " + str(b) + " is low-confidence"
+                     + ((" (±" + str(res) + "ms)") if res is not None else "")
+                     + " — verify the tempo.")
+    elif b > 150 or b < 90:
+        # Clean grid-lock but an unusual tempo for dance — the classic
+        # half/double-time trap (e.g. 168 is likely 84×2).
+        flags.append("Auto-BPM " + str(b) + " is outside the usual range — "
+                     "check it isn't half/double-time (try " + str(b // 2)
+                     + " or " + str(b * 2) + ").")
+    return flags
+
+
+def _resolve_project_bpm(classified, fn_bpm):
+    """Choose the project BPM, treating any filename label as a hint to verify.
+
+    A labelled BPM is grid-checked against the cleanest-locking rhythmic stem —
+    the audio is the arbiter. Returns (bpm, bpm_meta, bpm_flags); bpm is None
+    only when there is no label AND nothing locked (the caller then raises).
+    """
+    result, src = detect_project_bpm(classified)
+    credible = _bpm_is_credible(result)
+
+    def _audio_meta():
+        return {"source": src.name, "residual_ms": result["residual_ms"],
+                "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
+
+    # No filename hint — the audio decides (unchanged behaviour).
+    if fn_bpm is None:
+        if result is None:
+            return None, None, []
+        bpm = float(result["bpm_rounded"])
+        return bpm, _audio_meta(), _audio_quality_flags(bpm, result, credible)
+
+    # Filename hint present — verify it against the audio.
+    if not credible:
+        # Nothing locked cleanly to confirm the label. Keep it, but say so —
+        # never silently trust a filename for something this integral.
+        meta = {"source": "filename (unverified)", "residual_ms": None,
+                "inliers": None, "onsets": None}
+        flag = ("BPM " + _fmt_bpm(fn_bpm) + " came from the filename and could not be "
+                "confirmed against the audio (no clean rhythmic stem to grid-check it) "
+                "— verify the tempo.")
+        return float(fn_bpm), meta, [flag]
+
+    aligned = _octave_align(result["bpm"], fn_bpm)   # label resolves the octave
+    if abs(aligned - fn_bpm) <= BPM_AGREE_TOL:
+        # The audio confirms the label.
+        meta = {"source": "filename (audio-confirmed)",
+                "residual_ms": result["residual_ms"],
+                "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
+        return float(fn_bpm), meta, []
+
+    # Conflict: the audio grid-locks to a different tempo than the label says.
+    # Trust the audio (Sam's rule) and flag the discrepancy loudly. Round to the
+    # nearest whole BPM — the detector reads ~0.3 low but its nearest-int is
+    # dead-on, matching how the audio-only path already snaps (bpm_rounded).
+    audio_bpm = float(round(aligned))
+    meta = {"source": "audio (overrode filename " + _fmt_bpm(fn_bpm) + ")",
+            "residual_ms": result["residual_ms"],
+            "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
+    flag = ("Filename said " + _fmt_bpm(fn_bpm) + " BPM but the audio grid-locks to "
+            + _fmt_bpm(audio_bpm) + " — using " + _fmt_bpm(audio_bpm) + " (from "
+            + src.name + "). Verify the tempo.")
+    return float(audio_bpm), meta, [flag]
 
 
 def _version_alignment_sec(bpm_result):
@@ -542,9 +656,12 @@ def _make_refcompare_track(refcompare_files, audio_folder, start_beat, bpm):
     return [track], locators
 
 
-def _collect_flags(unmatched_updated, skipped, bpm_meta, bpm, silent_tracks):
+def _collect_flags(unmatched_updated, skipped, silent_tracks, bpm_flags=()):
     """Human-readable 'needs a look' notes for the UI — build decisions Sam
-    should review BEFORE opening the project (not silent guesses)."""
+    should review BEFORE opening the project (not silent guesses).
+
+    BPM notes (low-confidence, filename/audio conflict, unverified label) are
+    produced by _resolve_project_bpm and passed in via bpm_flags."""
     flags = []
     if unmatched_updated:
         flags.append("Updated stem(s) had no matching original — parked muted at the "
@@ -552,19 +669,7 @@ def _collect_flags(unmatched_updated, skipped, bpm_meta, bpm, silent_tracks):
     if skipped:
         flags.append("Left OUT of the build (unreadable / sample-rate mismatch): "
                      + ", ".join(skipped))
-    if bpm_meta and bpm_meta.get("source") != "filename":
-        res = bpm_meta.get("residual_ms")
-        b = int(float(bpm))
-        if res is None or res > 5.0:
-            flags.append("Auto-BPM " + str(b) + " is low-confidence"
-                         + ((" (±" + str(res) + "ms)") if res is not None else "")
-                         + " — verify the tempo.")
-        elif b > 150 or b < 90:
-            # Clean grid-lock but an unusual tempo for dance — the classic
-            # half/double-time trap (e.g. 168 is likely 84×2).
-            flags.append("Auto-BPM " + str(b) + " is outside the usual range — "
-                         "check it isn't half/double-time (try " + str(b // 2)
-                         + " or " + str(b * 2) + ").")
+    flags.extend(bpm_flags or [])
     if silent_tracks:
         flags.append(str(len(silent_tracks)) + " empty / dead stem(s) parked at the bottom "
                      "— check they weren't meant to have audio.")
@@ -979,18 +1084,17 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         unclassified = []
 
     bpm_meta = None
+    bpm_flags = []
     if bpm is None or str(bpm).lower() == "auto":
-        # A BPM labelled in the filenames ("…120BPM…") is authoritative — use it.
+        # A BPM labelled in the filenames ("…130BPM…") is only a hint — grid-check
+        # it against the audio, which is the arbiter (Sam: a 130-tagged pack was
+        # really 132). _resolve_project_bpm reconciles the two.
         fn_bpm = _bpm_from_filenames([f for lst in classified.values() for f in lst])
-        if fn_bpm is not None:
-            bpm = fn_bpm
-            bpm_meta = {"source": "filename", "residual_ms": 0.0,
-                        "inliers": None, "onsets": None}
-            print("\nBPM " + str(int(bpm)) + " read from the filenames.")
-    if bpm is None or str(bpm).lower() == "auto":
-        print("\nDetecting BPM from percussion...")
-        result, src = detect_project_bpm(classified)
-        if result is None:
+        print("\nResolving BPM"
+              + (" (filename hint: " + _fmt_bpm(fn_bpm) + ")" if fn_bpm else " from audio")
+              + "...")
+        bpm, bpm_meta, bpm_flags = _resolve_project_bpm(classified, fn_bpm)
+        if bpm is None:
             # Diagnose the shape: a folder of mixdowns/masters (a delivery batch,
             # not one song's stems) fails here — say so instead of a bare error.
             n_stems = sum(len(v) for v in classified.values())
@@ -1005,15 +1109,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                 "Could not auto-detect BPM (no usable rhythmic stem). "
                 "Type the BPM to build anyway."
             )
-        bpm = result["bpm_rounded"]
-        res_ms = result["residual_ms"]
-        bpm_meta = {"source": src.name, "residual_ms": res_ms,
-                    "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
-        warn = "" if (res_ms is not None and res_ms <= 5.0) else "  <-- LOW CONFIDENCE, verify"
-        print("  " + str(bpm) + " BPM from " + src.name
-              + " (raw " + ("%.2f" % result["bpm"]) + ", "
-              + str(result["n_inliers"]) + "/" + str(result["n_onsets"])
-              + " kicks, +/-" + str(res_ms) + "ms)" + warn)
+        print("  BPM " + _fmt_bpm(bpm) + " — " + bpm_meta["source"]
+              + (("  <-- " + bpm_flags[0]) if bpm_flags else ""))
 
     print("\nCopying stems and detecting audio regions...")
     stems = []
@@ -1314,7 +1411,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "flat_ref_peak": round(float(summary["peak"]), 3),
         "skipped": list(summary.get("skipped", [])),
         "flags": _collect_flags(unmatched_updated, summary.get("skipped", []),
-                                bpm_meta, bpm, silent_tracks),
+                                silent_tracks, bpm_flags),
         "multiversion": False,
     }
     _write_session_report(project_folder, report)
@@ -1455,24 +1552,19 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                    "vdir": audio_folder / vname, "mix": mix, "refs": refs, "buses": buses})
 
     bpm_meta = None
+    bpm_flags = []
     if bpm is None or str(bpm).lower() == "auto":
+        # Same rule as the single-version path: a filename BPM is a hint that must
+        # be grid-checked against the audio (arbiter). Verify on the primary version.
         fn_bpm = _bpm_from_filenames([s["file_path"] for p in pv for s in p["mix"]])
-        if fn_bpm is not None:
-            bpm = fn_bpm
-            bpm_meta = {"source": "filename", "residual_ms": 0.0,
-                        "inliers": None, "onsets": None}
-            print("\nBPM " + str(int(bpm)) + " read from the filenames.")
-    if bpm is None or str(bpm).lower() == "auto":
         prim_classified = {}
         for s in pv[0]["mix"]:
             prim_classified.setdefault(s["category"], []).append(s["file_path"])
-        result, src = detect_project_bpm(prim_classified)
-        if result is None:
+        bpm, bpm_meta, bpm_flags = _resolve_project_bpm(prim_classified, fn_bpm)
+        if bpm is None:
             raise ValueError("Could not auto-detect BPM; pass it explicitly.")
-        bpm = result["bpm_rounded"]
-        bpm_meta = {"source": src.name, "residual_ms": result["residual_ms"],
-                    "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
-        print("\nBPM " + str(bpm) + " (from " + src.name + ")")
+        print("\nBPM " + _fmt_bpm(bpm) + " — " + bpm_meta["source"]
+              + (("  <-- " + bpm_flags[0]) if bpm_flags else ""))
     bpm = float(bpm)
 
     mv_skipped = []
@@ -1713,7 +1805,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "refcompare": [Path(f).stem for f in refcompare_files],
         "flat_ref_peak": mv_peak,
         "skipped": mv_skipped,
-        "flags": (_collect_flags(mv_updated_names, mv_skipped, bpm_meta, bpm, [])
+        "flags": (_collect_flags(mv_updated_names, mv_skipped, [], bpm_flags)
                   + ([str(len(leftover_names)) + " file(s) weren't matched to a "
                       "version — parked muted at the bottom for you to place: "
                       + ", ".join(leftover_names)] if leftover_names else [])),
