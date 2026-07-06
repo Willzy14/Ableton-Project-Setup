@@ -13,3 +13,4 @@ project by eye). Many have hardcoded paths.
 | `verify_grouptrack.py` / `verify_heights.py` / `verify_output.py` | Eyeball checks on a generated project. **Superseded by `Source/validate_project.py`** — prefer that; `verify_output.py` has a hardcoded path. |
 | `find_tempo.py` / `find_tempo2.py` | Early tempo probes. **Superseded by `Source/bpm_detector.py`.** |
 | `test_build.py` / `test_classifier.py` | Early ad-hoc smoke scripts. **Superseded by the `Tests/` suite.** |
+| `audit_classifier_vs_projects.py` | **Live tool** (not superseded). Mines every finished project's clip name→colour as ground truth and prints the classifier's agreement rate + remaining gaps, ranked. Re-run after any `stem_classifier.py` change. Paths resolve relative to the repo — no hardcoding. |
