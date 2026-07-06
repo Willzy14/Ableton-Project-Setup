@@ -35,6 +35,10 @@ BASS_PATTERNS = [
     r"\bbass",
     r"\bsub\b",
     r"\blow.?end",
+    r"\breese",          # reese bass (dance staple)
+    r"\bwobble",         # wobble bass
+    r"\bb ?line\b",      # "b line" / "bline" = bassline (\bbass already covers bassline;
+                         # a space-only gap so "byline" isn't caught)
 ]
 
 DRUMS_PATTERNS = [
@@ -42,16 +46,18 @@ DRUMS_PATTERNS = [
     r"\bdrm\b",
     r"\bsnare",
     r"\bsn\b",
+    r"\bsd\b",            # snare drum
     r"\bclaps?\d*\b",
-    r"\bhats?\b",
+    r"\bhats?\d*\b",      # hat / hats / hat2 (a trailing digit must not break the match)
     r"\bhh\b",
     r"\bhi.?hat",
     r"\bpercs?\b",
     r"\bpercussion",
     r"\bshaker",
     r"\btamb",
+    r"\bcowbell",
     r"\bcymbal",
-    r"\bcymb\b",
+    r"\bcymbs?\b",        # cymb / cymbs (plural abbrev)
     r"\bconga",
     r"\btop.?loop",
     r"\btop.?drum",
@@ -74,6 +80,8 @@ MUSIC_PATTERNS = [
     r"\bchords?\b",
     r"\bmelod",
     r"\bpiano",
+    r"\bpno\b",          # piano abbrev
+    r"\bgtr\b",          # guitar abbrev
     r"\bkeys?\b",
     r"\bpads?\b",
     r"\bstring",
@@ -115,6 +123,7 @@ MUSIC_PATTERNS = [
 VOCAL_PATTERNS = [
     r"\bvocal",
     r"\bvox",
+    r"\bvocs?\b",        # bare "voc" / "vocs" (e.g. "Extra Voc")
     r"\bad.?lib",
     r"\bacapella",
     r"\bvoice",
@@ -128,6 +137,7 @@ VOCAL_PATTERNS = [
     r"\bbvs?\b",
     r"\bb vs\b",
     r"\bharm\b",
+    r"\bharmon(?:y|ie|iz|is)",   # harmony / harmonies / harmonize (NOT "harmonic")
     r"\bchoir",
     # NB: "chop"/"chops" is NOT here — it's ambiguous (Piano Chops / Synth Chops
     # are instrumental and very common in house). A genuine vocal chop still
@@ -147,7 +157,10 @@ FX_PATTERNS = [
     r"\btexture",
     r"\batmosph",
     r"\bambien",
+    r"\bambian",         # ambiance / ambiant (spelling of ambient)
     r"\bvinyl",
+    r"\bupfilter",       # up/down filter sweeps are transition FX
+    r"\bdownfilter",
     r"\bdownlift",
     r"\buplift",
     r"\btransition",
@@ -253,9 +266,11 @@ def _matches_any(name_lower, patterns):
 def _score_category(name):
     """Return (category, is_reference) using priority-ordered matching.
 
-    Order: kick > sends > vocals > strong-fx > bass > music > drums > fx >
-    reference. More specific categories checked first so compound names resolve
-    correctly.
+    Order: kick > vocals > strong-fx > bass > music > drums > sends > fx >
+    reference. An instrument/vocal name always beats a send-effect word (Sam:
+    "Chorus Synth" is music, a vocal "Delay Throw" is vox) — so sends is a
+    FALLBACK, only claimed when nothing else does (a bare Reverb/Delay/Chorus
+    send stem). More specific categories are still checked first otherwise.
     """
     has_kick = _matches_any(name, KICK_PATTERNS)
     has_bass = _matches_any(name, BASS_PATTERNS)
@@ -266,14 +281,15 @@ def _score_category(name):
     has_strong_fx = _matches_any(name, FX_STRONG_PATTERNS)
     has_drums = _matches_any(name, DRUMS_PATTERNS)
 
-    # "Hook" and "topline" are weak vocal signals — a hook/topline is usually the
-    # vocal part (Hook Main, Hook BG, Hook Low, Hook Response, Hook V2, Topline).
-    # They only read as vocals when no real instrument/percussion/FX claims the
-    # name. Strip the hook/topline words first (their own "top" would otherwise
-    # trip the drums 'tops' pattern) and see if anything else claims what's left:
-    # "Guitar Topline"/"Synth Hook" keep their instrument, "Hook Riser" stays FX.
-    if re.search(r"\bhook|\btop.?line", name):
-        residual = re.sub(r"\bhook|\btop.?line", " ", name)
+    # "Hook", "topline" and "throw" are weak vocal signals — a hook/topline is
+    # usually the vocal part (Hook Main, Hook BG, Hook V2, Topline), and a "delay
+    # throw" is a thrown vocal (Sam). They only read as vocals when no real
+    # instrument/percussion/FX claims the name. Strip those words first (their own
+    # "top" would otherwise trip the drums 'tops' pattern) and see if anything else
+    # claims what's left: "Guitar Topline"/"Synth Hook"/"Snare Throw" keep their
+    # instrument, "Hook Riser" stays FX; a bare "Delay Throw" reads as vocals.
+    if re.search(r"\bhook|\btop.?line|\bthrows?\b", name):
+        residual = re.sub(r"\bhook|\btop.?line|\bthrows?\b", " ", name)
         if not (_matches_any(residual, MUSIC_PATTERNS)
                 or _matches_any(residual, BASS_PATTERNS)
                 or _matches_any(residual, DRUMS_PATTERNS)
@@ -283,9 +299,6 @@ def _score_category(name):
 
     if has_kick and not has_bass:
         return "kick", False
-
-    if has_sends:
-        return "sends", False
 
     if has_vocals:
         return "vocals", False
@@ -301,6 +314,12 @@ def _score_category(name):
 
     if has_drums:
         return "drums", False
+
+    # Sends is a FALLBACK — a send-effect word only wins when no instrument,
+    # vocal or drum claimed the name. So a bare "Reverb"/"Delay"/"Chorus" stem
+    # is a send, but "Chorus Synth" is music and a vocal "Delay Throw" is vox.
+    if has_sends:
+        return "sends", False
 
     if has_fx:
         return "fx", False
