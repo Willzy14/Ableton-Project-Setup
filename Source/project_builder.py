@@ -1905,19 +1905,42 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         refcompare_files, audio_folder, content_end, bpm)
     all_stems += rc_tracks
     locators = list(locators) + rc_locs
+    # Updated / revised stems: match each to the working track it replaces (by
+    # _match_key), inherit its category + group/sub-group, and place it right next
+    # to the original (muted, own colour) for A/B — same as the single-version path.
+    # Only a genuinely UNMATCHED updated stem is appended at the bottom and flagged.
     mv_updated_names = []
-    for f in updated_files:
-        dest = audio_folder / f.name
-        if not dest.exists():
-            shutil.copy2(f, dest)
-        regions, _peak = find_audio_regions(dest, return_peak=True)
-        print("  updated stem (A/B, muted, own colour): " + f.name)
-        all_stems.append({"name": f.stem + " (updated)", "clip_name": f.stem,
-                          "category": "music", "color": UPDATED_TRACK_COLOR,
-                          "file_path": dest, "rel_path": "Audio/" + f.name,
-                          "regions": regions, "muted": True, "updated": True,
-                          "base_start_beat": offsets[0], "extra_clips": []})
-        mv_updated_names.append(f.stem)
+    if updated_files:
+        by_key = {}
+        for t in all_stems:
+            if (t.get("category") not in ("reference", "bus", "silent")
+                    and t.get("group_key") != "dry" and t.get("file_path")):
+                by_key.setdefault(_match_key(t["file_path"]), t)
+        for f in updated_files:
+            dest = audio_folder / f.name
+            if not dest.exists():
+                shutil.copy2(f, dest)
+            regions, _peak = find_audio_regions(dest, return_peak=True)
+            orig = by_key.get(_match_key(f))
+            t = {"name": ((orig["name"] if orig else f.stem) + " (updated)"),
+                 "clip_name": f.stem,
+                 "category": orig["category"] if orig else "music",
+                 "color": UPDATED_TRACK_COLOR,
+                 "file_path": dest, "rel_path": "Audio/" + f.name,
+                 "regions": regions, "muted": True, "updated": True,
+                 "base_start_beat": offsets[0], "extra_clips": []}
+            if orig:
+                for gk in ("group_key", "group_name", "subgroup_key", "subgroup_name",
+                           "subgroup_color", "subgroup_muted", "subgroup_unfolded"):
+                    if orig.get(gk) is not None:
+                        t[gk] = orig[gk]
+                all_stems.insert(all_stems.index(orig) + 1, t)
+                print("  updated stem (A/B, muted, own colour): " + f.name
+                      + " -> next to " + orig["name"])
+            else:
+                all_stems.append(t)
+                mv_updated_names.append(f.stem)
+                print("  updated stem (no match, appended muted): " + f.name)
 
     # Leftovers: any pack audio not claimed by a version or special folder. Never
     # dropped — parked at the bottom as a muted red reference track (Ext. Out) so
