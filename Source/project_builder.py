@@ -1882,7 +1882,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "categories": {cat: cat_counts[cat]
                        for cat in sorted(cat_counts, key=lambda c: CATEGORIES[c]["order"])},
         "groups": _build_groups_report(primary_tracks),
-        "buses": sorted({s["name"] for p in pv for s in p["buses"]}),
+        "buses": sorted({s["orig_name"] for p in pv for s in p["buses"]}),
         "dry_parked": [], "silent": [],
         "references_supplied": sum(len(p["refs"]) for p in pv),
         "references_preseeded": len(preseeded_refs),
