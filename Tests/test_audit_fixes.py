@@ -88,6 +88,26 @@ def test_element_key_pairs_across_index_styles():
     assert "808" in element_key("Bass_808.wav")
 
 
+def test_safe_filename_strips_illegal_chars():
+    assert pb._safe_filename('Artist - Title [Bad<>:Name]') == 'Artist - Title [Bad_Name]'
+    assert pb._safe_filename('a/b\\c:d') == 'a_b_c_d'
+    assert pb._safe_filename('   ') == 'Untitled'      # never empty
+    assert pb._safe_filename('Ak1ra - The Way [Ramzi]') == 'Ak1ra - The Way [Ramzi]'  # normal untouched
+
+
+def test_analysis_off_flag_when_numpy_absent():
+    """When numpy is missing, the build flags that the full-mix/bus safety net is off."""
+    import stem_analysis
+    saved = stem_analysis._np
+    try:
+        stem_analysis._np = None                       # simulate a numpy-less machine
+        flags = pb._analysis_off_flags()
+        assert flags and "safety analysis is off" in flags[0].lower(), flags
+    finally:
+        stem_analysis._np = saved
+    assert pb._analysis_off_flags() == []              # present again -> no flag
+
+
 def test_validate_als_flags_never_raises():
     """The inline validator always returns a list — never propagates an exception."""
     assert isinstance(pb._validate_als_flags(Path("nope.als"), 128.0), list)

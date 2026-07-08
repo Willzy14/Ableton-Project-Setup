@@ -23,7 +23,7 @@ from als_patcher import (patch_project, find_audio_regions, CLIP_START_BEATS,
                          SILENCE_FLOOR_DB, get_wav_info)
 from bpm_detector import detect_bpm
 from bounce import sum_stems_to_wav
-from stem_analysis import audio_label, find_group_buses
+from stem_analysis import audio_label, find_group_buses, analysis_available
 from versions import detect_versions, element_key
 
 VERSION_GAP_BARS = 16   # gap between version sections on the timeline
@@ -686,6 +686,26 @@ def _collect_flags(unmatched_updated, skipped, silent_tracks, bpm_flags=()):
     return flags
 
 
+def _safe_filename(name):
+    """Sanitise a user-typed name for use as a file/folder name: replace the
+    characters Windows/macOS forbid (\\ / : * ? " < > |) with '_' and collapse
+    whitespace, so a label like 'Artist - Title [Bad<>Name]' can't blow up the
+    build when it becomes the project folder + .als name."""
+    name = re.sub(r'[\\/:*?"<>|]+', "_", name)
+    return re.sub(r"\s+", " ", name).strip() or "Untitled"
+
+
+def _analysis_off_flags():
+    """A flag when the numpy content-analysis safety nets (full-mix + group-bus
+    detection) can't run, so an un-caught full mix / bus in the flat-ref sum
+    isn't a silent surprise. Empty when numpy is present (Sam's normal case)."""
+    if analysis_available():
+        return []
+    return ["Audio safety analysis is OFF (numpy not installed) — a full mix / "
+            "master or a group-bus left among the stems won't be auto-caught and "
+            "could pollute the flat-ref sum. Check the flat-ref peak and listen."]
+
+
 def _validate_als_flags(als_path, expected_bpm=None):
     """Parse the just-written .als and surface any structural problem (incl. a
     tempo that didn't land) as a flag. A CLI build otherwise has NO safety net —
@@ -840,13 +860,16 @@ def _extract_special_dirs(classified, references, unclassified, root):
     diverted even if the pack is named like 'Coldplay - Fix You Stems', so a
     whole pack isn't mis-sifted into muted A/B tracks."""
     from versions import special_dir_kind
-    root = Path(root).resolve()
+    # .absolute() not .resolve(): a plain parent==root check (Path equality
+    # normalises case/separators) doesn't need symlink resolution, and .resolve()
+    # does per-file I/O that can stall on a stale network share inside this loop.
+    root = Path(root).absolute()
     updated, ref_compare = [], []
 
     def sift(lst):
         keep = []
         for f in lst:
-            parent = Path(f).resolve().parent
+            parent = Path(f).absolute().parent
             kind = None if parent == root else special_dir_kind(parent.name)
             if kind == "update":
                 updated.append(f)
@@ -1042,6 +1065,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     if project_name is None:
         project_name = artist + " - " + title + " [" + label + "]"
+    project_name = _safe_filename(project_name)   # can't blow up the folder/.als
     project_folder = output_base / (project_name + " Project")
     audio_folder = project_folder / "Audio"
     info_folder = project_folder / "Ableton Project Info"
@@ -1090,6 +1114,10 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     # is moved to references — so it is kept OUT of the flat bounce (summing a
     # whole mix into the reference would pollute it). No-op without numpy.
     suspects = list(unclassified) + list(classified.get("music", []))
+    # When numpy is absent the full-mix / group-bus safety nets can't run — flag
+    # it so an un-caught full mix / bus summed into the flat ref isn't a silent
+    # surprise (on Sam's machine numpy is present, so this never fires there).
+    analysis_flags = _analysis_off_flags()
     full_mixes = []
     for f in suspects:
         try:
@@ -1460,7 +1488,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "skipped": list(summary.get("skipped", [])) + pre_skipped,
         "flags": _collect_flags(unmatched_updated,
                                 list(summary.get("skipped", [])) + pre_skipped,
-                                silent_tracks, bpm_flags) + als_flags,
+                                silent_tracks, bpm_flags) + analysis_flags + als_flags,
         "multiversion": False,
     }
     _write_session_report(project_folder, report)
@@ -1567,6 +1595,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     """
     if project_name is None:
         project_name = artist + " - " + title + " [" + label + "]"
+    project_name = _safe_filename(project_name)   # can't blow up the folder/.als
     project_folder = Path(output_base) / (project_name + " Project")
     audio_folder = project_folder / "Audio"
     updated_files = list(updated_files or [])
@@ -1588,14 +1617,11 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     leftover_files, _sk = _ensure_wav_paths(leftover_files, audio_folder / "_wav_staging")
     mv_pre_skipped += _skip_labels(_sk)
 
-    def _safe(name):
-        return re.sub(r'[\\/:*?"<>|]+', "_", name).strip() or "Version"
-
     print("Multi-version package: " + " | ".join(v["name"] for v in versions))
 
     pv = []
     for v in versions:
-        vname = _safe(v["name"])
+        vname = _safe_filename(v["name"]) or "Version"
         rel_prefix = "Audio/" + vname + "/"
         print("\n[" + v["name"] + "] processing " + str(len(v["files"])) + " files...")
         report_path = _reports_dir(project_folder) / ("ML Classification Report - " + vname + ".txt")
@@ -1865,7 +1891,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "flat_ref_peak": mv_peak,
         "skipped": mv_skipped + mv_pre_skipped,
         "flags": (_collect_flags(mv_updated_names, mv_skipped + mv_pre_skipped, [], bpm_flags)
-                  + als_flags
+                  + _analysis_off_flags() + als_flags
                   + ([str(len(leftover_names)) + " file(s) weren't matched to a "
                       "version — parked muted at the bottom for you to place: "
                       + ", ".join(leftover_names)] if leftover_names else [])),

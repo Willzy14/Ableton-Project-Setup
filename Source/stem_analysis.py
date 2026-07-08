@@ -22,6 +22,13 @@ try:
 except ImportError:  # pragma: no cover
     _np = None
 
+
+def analysis_available():
+    """True when the numpy content-analysis path can run. When False, the
+    full-mix / group-bus safety nets are off — the caller should flag that a
+    suspect file couldn't be checked rather than silently trusting the filename."""
+    return _np is not None
+
 # Octave-ish analysis bands (Hz).
 _BANDS = [(20, 60), (60, 120), (120, 250), (250, 500), (500, 1000),
           (1000, 2000), (2000, 4000), (4000, 8000), (8000, 16000)]

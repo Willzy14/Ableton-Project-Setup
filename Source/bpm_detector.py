@@ -244,6 +244,13 @@ def detect_bpm(wav_path, min_bpm=MIN_BPM, max_bpm=MAX_BPM):
     onsets to trust.
     """
     env, er = _read_envelope(wav_path)
+    # >>> CRNN Kick Detector hand-off seam <<<
+    # This is the plug-in point for Sam's dedicated Kick Detector (a CRNN that
+    # emits clean per-kick onsets): swap `_pick_onsets` for the model's onset
+    # times here, then the lattice fit below is unchanged. Feed the isolated kick
+    # stem straight in (our stems are pre-separated — skip Demucs). Gate it behind
+    # a flag/env so the pure-stdlib path stays the default until it's validated.
+    # See memory: kick-detector-integration-planned.
     onsets = _pick_onsets(env, er)
     if len(onsets) < MIN_ONSETS:
         return None
