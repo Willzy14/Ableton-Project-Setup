@@ -30,20 +30,23 @@ target on failure. ~10 lines. Closes it entirely.
 AIFF in a named category vanishes from the `.als` AND from the flags. *(Codex #1.)*
 **Fix:** thread the skipped names into `report["skipped"]` + `_collect_flags`, both build paths.
 
-**A3 · Cross-version element pairing breaks on ~common naming.** ✓ verified (Claude + MiniMax)
+**A3 · ✅ DONE (2026-07-06) · Cross-version element pairing breaks on ~common naming.** ✓ verified (Claude + MiniMax)
 `element_key` ([versions.py:62](../Source/versions.py)) takes only the segment *after the last underscore*:
 `Kick_01` → key `"01"`, but `Kick` → `"kick"` — the same kick in two versions becomes two separate,
 ungrouped tracks. *(MiniMax H1, Claude.)*
 **Fix:** strip a trailing export index from both sides before keying; add pairing tests (`Kick_01`↔`Kick`,
 `Drum_Top_Extended`↔`Drum_Top`).
 
-**A4 · Deep nesting is classified only one subfolder down.** (Codex #2 — verify)
+**A4 · ⏳ DEFERRED (needs careful design) · Deep nesting is classified only one subfolder down.** (Codex #2 — verify)
+> A naive "claimed vs found" recursive diff false-flags on every pack with refs / buses / version
+> subfolders / dupes, so this needs a proper coverage model (correct exclude set + expected-placed
+> count) — its own focused session, not a rushed change. Uncommon in Sam's real packs.
 `classify_stems` + the Studio App multi-input path resolve one wrapper level; `Stems/Drums/WAV/Kick.wav`
 can build without the deep stems and without a flag.
 **Fix:** one canonical recursive manifest (`rglob` with `__MACOSX`/dotfile/special-dir excludes), then
 diff "all source audio" vs "claimed" and flag the gap.
 
-**A5 · The project folder is set permanently read-only by the icon step.** ✓ verified
+**A5 · ~~The project folder is set permanently read-only by the icon step.~~ RESOLVED — not a real issue (Sam, 2026-07-06):** he has never hit "access denied" dropping files into a built project folder. A Windows *folder* read-only attribute is a customisation signal (for `Desktop.ini`), not a write-block on the folder's contents. Left as-is. ✓ verified (code) — premise wrong.
 [project_builder.py:923](../Source/project_builder.py) sets the folder READONLY. That blocks Sam's own
 workflow — dropping a current master into the project's `Audio/` for A/B (the pre-seeded-ref feature)
 returns "Access denied" in Explorer. *(MiniMax H6.)*
@@ -85,7 +88,9 @@ loudest sustained window (not elapsed time) for bus pursuit.
 Both depend on template line layout; a future Ableton/template change can silently no-op (wrong tempo, stale
 `UserName`). **Fix:** assert the value changed post-patch and raise a flag if not; see U1.
 
-**M5 · `_read_wav_header` rejects RF64/WAVE64 (>4 GB) and trusts `data_size`.** (Codex #6 + MiniMax L2)
+**M5 · ✅ PARTLY DONE (2026-07-06) · `_read_wav_header` rejects RF64/WAVE64 (>4 GB) and trusts `data_size`.** (Codex #6 + MiniMax L2)
+> Done: `data_size` is now capped at the real file bytes (a sentinel `0xFFFFFFFF` can't drive an OOM
+> read). Still open: RF64/WAVE64 >4 GB support (a `soundfile` header fallback) — larger, deferred.
 A large Pro Tools/Cubase export is skipped as "Not a WAV", or a sentinel `data_size` (0xFFFFFFFF) drives a
 giant read → OOM. Region/bounce numpy paths also read the whole file into RAM. **Fix:** cap `data_size` at
 file-size−offset; optional `soundfile` fallback for RF64; stream regions above a size threshold.
@@ -104,7 +109,7 @@ swap; pin host/scheme.
 
 - **L1 · `BUS_TRACK_COLOR = 2`** but docs/spec say grey **37** ✓ ([project_builder.py:65](../Source/project_builder.py)) — buses don't read as inactive. *(Codex #10.)*
 - **L2 · Validator uses `replace("/","\\")`** ([validate_project.py:81](../Source/validate_project.py)) — false "missing audio" on Mac. *(Codex #9.)* Fix: `PurePosixPath(rel).parts`.
-- **L3 · Zero-frame clip** from a header-only WAV renders as a phantom in Ableton. *(MiniMax M3.)* Fix: skip clips with `len ≤ 0`.
+- **L3 · ✅ DONE (2026-07-06) · Zero-frame clip** from a header-only WAV renders as a phantom in Ableton. *(MiniMax M3.)* Fixed: the clip loop skips any region with `len ≤ 0`.
 - **L4 · `path.resolve()` in hot loops** can stall on a stale network share. *(MiniMax L1.)* Fix: `.absolute()`.
 - **L5 · Pure-numeric stem names** ("01.wav") dedupe to "Vox/Vox 2" display names (clip name still correct — cosmetic). *(MiniMax L3.)*
 
