@@ -33,7 +33,15 @@ skipped`. Single sets `length_beats`/`first_beat_sec` too (so the shape matches)
 detection must pass `return_peak=True` (it doesn't — single does). A version that's silent for an element just
 contributes no clip at its offset; park the element as a silent track ONLY if it's silent in EVERY version.
 
-**(b) Wet/dry parking — TWO-TRACK-PER-ELEMENT (my "all-dry" rule was WRONG).** ⚠ A union or "park only if dry
+**(b) Wet/dry parking — NOT YET DONE. Complication found (2026-07-08):** `element_key` COLLIDES on
+wet/dry tokens — `Lead_Vox_DRY` and `BGV_Vox_DRY` both key to `'dry'` (rsplit last segment), and both
+`_WET` → `'wet'`. So dry-park pairing across versions can't use `element_key` as-is (two different dry
+vocals would land on one track). Do it with a DEDICATED wet/dry-stripped key (additive, like
+`sorted_element_key`), find_dry_stems PER VERSION (not union — avoids the false-pair below), and
+SEPARATE the dry stems out of `p["mix"]` before the per-version bounce (model on how buses are already
+separated/parked/excluded-from-sum). This is the hardest remaining stage — give it fresh focus.
+
+**TWO-TRACK-PER-ELEMENT (my "all-dry" rule was WRONG).** ⚠ A union or "park only if dry
 in every version" silently DROPS a mixed dry clip (`v0=wet, v1=dry` → v1's dry lands nowhere). Correct design
 (MiniMax): for each element, a `working` track AND an independent `dry_park` track, never sharing clips. Per
 version, classify each stem `{silent, active, dry}` and route its clip:
