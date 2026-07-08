@@ -86,3 +86,13 @@ construction. The silent/dry/updated DETECTORS are already shared module fns (`f
 ## What NOT to touch
 The MIDDLE alignment — clip offsets, phrase-slot placement, kick-grid nudge (Fallon). Head/tail + the named
 parity gaps only.
+
+---
+
+## ✅ COMPLETE (2026-07-08)
+All stages shipped, each harness-gated (decompressed-XML equality on real Admonic + Fallon packs)
+and with tests. Suite 24/24.
+- **0** harness (`Scripts/m1_refactor_harness.py`) — also found + fixed a real multi+bus crash.
+- **1** `_make_project_context` head · **2** `_patch_and_validate`/`_finish_project` tail — pure extractions, proven identical.
+- **3** silent parity · **4** wet/dry dry-park (via `dry_pair_key`) · **5** updated-stem matching — the three parity gaps, each with a synthetic test.
+- **6** verify — preseeded-dedup, FX head_sec, detectors, skips, subgroup scope all confirmed identical across paths.
