@@ -1573,11 +1573,13 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
         color = (category_colors or {}).get(cat, CATEGORIES[cat]["color"])
         for f in classified[cat]:
             dest = _copy(f)
-            regions = find_audio_regions(dest, head_sec=2.0 if cat == "fx" else 0.0)
+            regions, true_peak_db = find_audio_regions(
+                dest, head_sec=2.0 if cat == "fx" else 0.0, return_peak=True)
             mix_stems.append({
                 "element_key": element_key(f), "orig_name": f.stem,
                 "category": cat, "color": color, "file_path": dest,
                 "rel_path": rel_prefix + f.name, "regions": regions,
+                "silent": true_peak_db < SILENCE_FLOOR_DB,
             })
 
     bus_paths = find_group_buses([s["file_path"] for s in mix_stems])
@@ -1738,6 +1740,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
             "category": s["category"], "color": s["color"],
             "file_path": s["file_path"], "rel_path": s["rel_path"],
             "regions": s["regions"], "base_start_beat": offsets[0], "extra_clips": [],
+            "silent": s.get("silent", False),
         }
         if CATEGORIES[s["category"]]["group"] and cat_counts[s["category"]] >= 2:
             track["group_key"] = s["category"]
@@ -1758,7 +1761,8 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     for k in range(1, len(pv)):
         for s in pv[k]["mix"]:
             ec = {"file_path": s["file_path"], "rel_path": s["rel_path"],
-                  "regions": s["regions"], "start_beat": offsets[k], "clip_name": s["orig_name"]}
+                  "regions": s["regions"], "start_beat": offsets[k],
+                  "clip_name": s["orig_name"], "silent": s.get("silent", False)}
             # Primary match by element_key; fall back to the order-independent key
             # so a reversed-word-order element (FX_FILLS vs FILLS_FX) still rides
             # the same track across versions instead of landing on its own.
@@ -1770,11 +1774,29 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                 nt = {"name": s["orig_name"], "clip_name": s["orig_name"],
                       "category": s["category"], "color": s["color"],
                       "file_path": s["file_path"], "rel_path": s["rel_path"],
-                      "regions": s["regions"], "base_start_beat": offsets[k], "extra_clips": []}
+                      "regions": s["regions"], "base_start_beat": offsets[k],
+                      "extra_clips": [], "silent": s.get("silent", False)}
                 extra_only.append(nt)
                 track_by_elem[s["element_key"]] = nt
                 track_by_sorted.setdefault(sorted_element_key(s["file_path"]), nt)
     all_stems += extra_only
+
+    # Park elements that are silent in EVERY version (a dead export in all
+    # versions) — own colour at the bottom, out of the working layout, like the
+    # single-version path. If even one version has audio for the element, the
+    # working track stays and the silent versions just contribute no clip.
+    mv_silent = []
+    for t in list(all_stems):
+        clip_flags = [t.get("silent", False)] + [ec.get("silent", False)
+                                                 for ec in t.get("extra_clips", [])]
+        if clip_flags and all(clip_flags):
+            t["category"] = "silent"
+            t["color"] = SILENT_TRACK_COLOR
+            for gk in ("group_key", "group_name", "subgroup_key", "subgroup_name",
+                       "subgroup_color", "subgroup_muted", "subgroup_unfolded"):
+                t.pop(gk, None)
+            all_stems.remove(t)
+            mv_silent.append(t)
 
     # FLAT REF: one track, a bounce clip per version at each version's offset
     if primary.get("bounce_path"):
@@ -1874,6 +1896,13 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     if leftover_names:
         print("  leftover (parked, muted, review): " + ", ".join(leftover_names))
 
+    # Silent-in-every-version elements go at the very bottom (own colour), matching
+    # the single-version path.
+    all_stems += mv_silent
+    if mv_silent:
+        print("  empty in every version (parked at bottom, own colour): "
+              + ", ".join(t["clip_name"] for t in mv_silent))
+
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template (" + str(len(all_stems)) + " tracks)...")
     als_flags = _patch_and_validate(als_path, all_stems, bpm, audio_folder, locators)
@@ -1897,7 +1926,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                        for cat in sorted(cat_counts, key=lambda c: CATEGORIES[c]["order"])},
         "groups": _build_groups_report(primary_tracks),
         "buses": sorted({s["orig_name"] for p in pv for s in p["buses"]}),
-        "dry_parked": [], "silent": [],
+        "dry_parked": [], "silent": [t["clip_name"] for t in mv_silent],
         "references_supplied": sum(len(p["refs"]) for p in pv),
         "references_preseeded": len(preseeded_refs),
         "updated_stems": [Path(f).stem for f in updated_files],
