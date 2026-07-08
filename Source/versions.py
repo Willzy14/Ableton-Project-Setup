@@ -56,9 +56,15 @@ _CUTDOWN_KW = ("radio", "shrt", "short", "edit", "dub")
 
 
 def element_key(path):
-    """The element name, stripped of the producer's '<prefix>_<element>' tag
-    AND of any version token, so the same element pairs across versions."""
+    """The element name, stripped of the producer's '<prefix>_<element>' tag, a
+    trailing export index, AND any version token, so the same element pairs
+    across versions."""
     name = Path(path).stem
+    # Drop a TRAILING sequence/export index ('Kick_01', 'Snare 2') before taking
+    # the last segment — otherwise rsplit keys it to the number, not the element,
+    # so 'Kick' in one version and 'Kick_01' in another never pair. Only 1-2
+    # digits after a separator, so a meaningful 3-digit model (808/909) is kept.
+    name = re.sub(r"[_\-\s.]+\d{1,2}$", "", name) or name
     elem = name.rsplit("_", 1)[1] if "_" in name else name
     stripped = re.sub(r"\s+", " ", _VERSION_TOKEN_RE.sub(" ", elem)).strip().lower()
     # Don't collapse an element that is ONLY a version token to empty.

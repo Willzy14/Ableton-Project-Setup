@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Source"))
 import als_patcher
 import project_builder as pb
 import validate_project
+from versions import element_key
 
 
 def test_compress_als_roundtrip_and_no_temp_left():
@@ -61,6 +62,30 @@ def test_validator_resolves_posix_relative_cross_platform():
     resolved = validate_project._resolve_file_ref(Path("/proj"), fr)
     # The path must end with the Audio + Kick.wav components, on any OS.
     assert resolved.parts[-2:] == ("Audio", "Kick.wav"), resolved
+
+
+def test_wav_data_size_capped_at_real_bytes():
+    """A sentinel/oversized data-chunk size must be capped to the file's bytes,
+    so n_frames can't go gigantic and drive an OOM read."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "sentinel.wav"
+        fmt = struct.pack("<HHIIHH", 1, 1, 44100, 88200, 2, 16)   # PCM mono 16-bit
+        pcm = struct.pack("<4h", 1, 2, 3, 4)                       # 4 real frames (8 bytes)
+        body = (b"fmt " + struct.pack("<I", len(fmt)) + fmt
+                + b"data" + struct.pack("<I", 0xFFFFFFFF) + pcm)   # lies: "data to EOF"
+        p.write_bytes(b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body)
+        hdr = als_patcher._read_wav_header(p)
+        assert hdr["n_frames"] == 4, hdr["n_frames"]              # capped, not billions
+
+
+def test_element_key_pairs_across_index_styles():
+    """The same element must pair whether or not a version tags it with an index."""
+    assert element_key("Kick.wav") == element_key("Kick_01.wav") \
+        == element_key("01_Kick.wav") == element_key("Kick 2.wav") == "kick"
+    # a within-version index collision is gone (was both -> "01")
+    assert element_key("Kick_01.wav") != element_key("Snare_01.wav")
+    # a meaningful 3-digit model number is NOT stripped as an index
+    assert "808" in element_key("Bass_808.wav")
 
 
 def test_validate_als_flags_never_raises():

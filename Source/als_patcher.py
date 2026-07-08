@@ -227,6 +227,13 @@ def _read_wav_header(wav_path):
                 # often odd — without skipping the pad we'd land mid-chunk and
                 # read 'fmt '/'data' as garbage (stem silently reads as empty).
                 f.seek(chunk_size + (chunk_size & 1), 1)
+    # Cap data_size at the bytes actually present. Some DAWs write a sentinel
+    # data size (0xFFFFFFFF = "data runs to EOF"); trusting it would make n_frames
+    # gigantic and downstream reads (bounce/regions) allocate/read wildly.
+    if data_offset:
+        avail = max(0, os.path.getsize(str(wav_path)) - data_offset)
+        if data_size > avail:
+            data_size = avail
     bytes_per_sample = bits_per_sample // 8
     n_frames = data_size // (n_channels * bytes_per_sample) if bytes_per_sample else 0
     return {
@@ -660,6 +667,8 @@ def insert_clip_into_track(lines, track, stem_name, clip_color, rel_path,
     indent = "\t\t\t\t\t\t\t"
     all_clip_lines = []
     for region_start, region_end in regions:
+        if region_end - region_start <= 0:
+            continue   # never emit a zero-length clip — Ableton renders it as a phantom dot
         all_clip_lines.extend(_build_clip_xml(
             stem_name, clip_color, rel_path, abs_path,
             sample_count, sample_rate, file_size, bpm, indent,
