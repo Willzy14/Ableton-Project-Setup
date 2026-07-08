@@ -24,7 +24,7 @@ from als_patcher import (patch_project, find_audio_regions, CLIP_START_BEATS,
 from bpm_detector import detect_bpm
 from bounce import sum_stems_to_wav
 from stem_analysis import audio_label, find_group_buses, analysis_available
-from versions import detect_versions, element_key
+from versions import detect_versions, element_key, sorted_element_key
 
 VERSION_GAP_BARS = 16   # gap between version sections on the timeline
 
@@ -1731,6 +1731,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
 
     all_stems = []
     track_by_elem = {}
+    track_by_sorted = {}   # fallback: pairs reversed-word-order elements (FX_FILLS/FILLS_FX)
     for s in primary["mix"]:
         track = {
             "name": s["display_name"], "clip_name": s["orig_name"],
@@ -1743,6 +1744,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
             track["group_name"] = group_names.get(s["category"], s["category"].title())
         all_stems.append(track)
         track_by_elem[s["element_key"]] = track
+        track_by_sorted.setdefault(sorted_element_key(s["file_path"]), track)
 
     # Nested sub-groups on the primary (shared) tracks — later-version clips ride
     # the same tracks, so tagging the primary layer sub-groups every version.
@@ -1757,7 +1759,11 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         for s in pv[k]["mix"]:
             ec = {"file_path": s["file_path"], "rel_path": s["rel_path"],
                   "regions": s["regions"], "start_beat": offsets[k], "clip_name": s["orig_name"]}
-            t = track_by_elem.get(s["element_key"])
+            # Primary match by element_key; fall back to the order-independent key
+            # so a reversed-word-order element (FX_FILLS vs FILLS_FX) still rides
+            # the same track across versions instead of landing on its own.
+            t = (track_by_elem.get(s["element_key"])
+                 or track_by_sorted.get(sorted_element_key(s["file_path"])))
             if t:
                 t["extra_clips"].append(ec)
             else:
@@ -1767,6 +1773,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                       "regions": s["regions"], "base_start_beat": offsets[k], "extra_clips": []}
                 extra_only.append(nt)
                 track_by_elem[s["element_key"]] = nt
+                track_by_sorted.setdefault(sorted_element_key(s["file_path"]), nt)
     all_stems += extra_only
 
     # FLAT REF: one track, a bounce clip per version at each version's offset

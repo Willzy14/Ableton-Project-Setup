@@ -71,6 +71,21 @@ def element_key(path):
     return stripped or re.sub(r"\s+", " ", elem).strip().lower()
 
 
+def sorted_element_key(path):
+    """Order-independent element key: the descriptor with leading/trailing export
+    indices and version tokens removed, word tokens SORTED. Used only as a
+    FALLBACK when the primary element_key doesn't pair across versions — e.g. a
+    producer who reversed the words for the same element ('FX_FILLS' one version,
+    'FILLS_FX' the next). Consulted only on a primary miss, so it can't re-pair a
+    pack that already matches on element_key (verified: Fallon unchanged)."""
+    name = Path(path).stem
+    name = re.sub(r"^\s*\d{1,3}[_\-\s.]+", "", name)   # leading export index
+    name = re.sub(r"[_\-\s.]+\d{1,2}$", "", name)      # trailing export index
+    name = _VERSION_TOKEN_RE.sub(" ", name)            # version tokens
+    toks = sorted(t for t in re.split(r"[_\-\s.]+", name.lower()) if t)
+    return " ".join(toks)
+
+
 def _audio_in(folder):
     return [f for f in sorted(Path(folder).iterdir())
             if f.is_file() and f.suffix.lower() in AUDIO_EXT]

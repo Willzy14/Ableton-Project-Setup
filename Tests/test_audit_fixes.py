@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Source"))
 import als_patcher
 import project_builder as pb
 import validate_project
-from versions import element_key
+from versions import element_key, sorted_element_key
 
 
 def test_compress_als_roundtrip_and_no_temp_left():
@@ -106,6 +106,15 @@ def test_analysis_off_flag_when_numpy_absent():
     finally:
         stem_analysis._np = saved
     assert pb._analysis_off_flags() == []              # present again -> no flag
+
+
+def test_sorted_element_key_pairs_reversed_word_order():
+    """The fallback key pairs a reversed-word-order element across versions
+    (FX_FILLS vs FILLS_FX) without colliding genuinely different elements."""
+    assert sorted_element_key("FX_FILLS.wav") == sorted_element_key("FILLS_FX.wav")
+    assert sorted_element_key("Bass Call.wav") != sorted_element_key("Bass Response.wav")
+    # export index / version tokens don't disturb it
+    assert sorted_element_key("01_FX_FILLS.wav") == sorted_element_key("FILLS_FX.wav")
 
 
 def test_validate_als_flags_never_raises():
