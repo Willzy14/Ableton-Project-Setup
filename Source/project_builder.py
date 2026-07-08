@@ -1024,6 +1024,26 @@ def _make_project_context(artist, title, label, output_base, project_name=None):
             "audio_folder": audio_folder, "preseeded": preseeded}
 
 
+def _patch_and_validate(als_path, all_stems, bpm, audio_folder, locators):
+    """Shared: render the .als from the template and validate the result. Returns
+    any validation flags (a tempo that didn't land / broken structure) to fold
+    into the report's 'needs a look' list. Both build paths call this."""
+    patch_project(template_path=get_template_path(), output_path=als_path,
+                  stems=all_stems, bpm=float(bpm), project_audio_dir=audio_folder,
+                  locators=locators)
+    return _validate_als_flags(als_path, float(bpm))
+
+
+def _finish_project(project_folder, report, cleanup_dirs=()):
+    """Shared TAIL: write the session report, apply the Ableton folder icon, remove
+    the WAV-conversion scratch dirs, and return the project folder."""
+    _write_session_report(project_folder, report)
+    apply_ableton_folder_icon(project_folder)
+    for d in cleanup_dirs:
+        shutil.rmtree(d, ignore_errors=True)
+    return project_folder
+
+
 def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                   use_ml=None, project_name=None, category_colors=None,
                   subgroup_categories=None):
@@ -1455,15 +1475,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template...")
-    patch_project(
-        template_path=get_template_path(),
-        output_path=als_path,
-        stems=all_stems,
-        bpm=float(bpm),
-        project_audio_dir=audio_folder,
-        locators=ref_locators,
-    )
-    als_flags = _validate_als_flags(als_path, float(bpm))
+    als_flags = _patch_and_validate(als_path, all_stems, bpm, audio_folder, ref_locators)
 
     print("\nProject created:")
     print("  Folder: " + str(project_folder))
@@ -1497,14 +1509,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                                 silent_tracks, bpm_flags) + analysis_flags + als_flags,
         "multiversion": False,
     }
-    _write_session_report(project_folder, report)
-    apply_ableton_folder_icon(project_folder)
-
-    # The WAV-conversion scratch dir is done with — clean it up (it used to leak
-    # one OS-temp dir per build that had any non-WAV stems).
-    shutil.rmtree(wav_staging, ignore_errors=True)
-
-    return project_folder
+    return _finish_project(project_folder, report, cleanup_dirs=[wav_staging])
 
 
 def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
@@ -1860,10 +1865,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
 
     als_path = project_folder / (project_name + ".als")
     print("\nPatching template (" + str(len(all_stems)) + " tracks)...")
-    patch_project(template_path=get_template_path(), output_path=als_path,
-                  stems=all_stems, bpm=bpm, project_audio_dir=audio_folder,
-                  locators=locators)
-    als_flags = _validate_als_flags(als_path, float(bpm))
+    als_flags = _patch_and_validate(als_path, all_stems, bpm, audio_folder, locators)
 
     bars = [str(int((locators[i][0] - CLIP_START_BEATS) / 4) + 33) for i in range(len(pv))]
     print("\nMulti-version project created: " + str(project_folder))
@@ -1899,16 +1901,10 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "multiversion": True,
         "versions": [p["name"] for p in pv],
     }
-    _write_session_report(project_folder, report)
-    apply_ableton_folder_icon(project_folder)
-
-    # Remove the per-version WAV-conversion scratch dirs — these sit INSIDE the
-    # project's Audio/ (unlike the single-version OS-temp dir), so leaving them
-    # would clutter the delivered project and confuse a later rebuild's ref scan.
-    for st in audio_folder.rglob("_wav_staging"):
-        shutil.rmtree(st, ignore_errors=True)
-
-    return project_folder
+    # The per-version WAV-conversion scratch dirs sit INSIDE the project's Audio/
+    # (unlike the single-version OS-temp dir), so clean them all up.
+    return _finish_project(project_folder, report,
+                           cleanup_dirs=list(audio_folder.rglob("_wav_staging")))
 
 
 if __name__ == "__main__":
