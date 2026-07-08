@@ -241,6 +241,20 @@ def _find_audio_root(folder):
     return folder                                # 0 / 2+ / special — keep parent
 
 
+def _safe_extract(zf, dest):
+    """Extract a zip, refusing any member that would land OUTSIDE dest (zip-slip).
+
+    A crafted/badly-made zip can carry absolute paths or '../..' entries that
+    would write anywhere on disk. Any such member is skipped, not written.
+    """
+    dest = Path(dest).resolve()
+    for member in zf.infolist():
+        target = (dest / member.filename).resolve()
+        if target == dest or dest in target.parents:
+            zf.extract(member, dest)
+        # else: escapes dest — silently skip the malicious entry
+
+
 def prepare_stem_folder(paths, workdir):
     """Resolve dropped path(s) into ONE folder for the engine to scan.
 
@@ -262,7 +276,7 @@ def prepare_stem_folder(paths, workdir):
         ex = Path(workdir)
         ex.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(paths[0]) as z:
-            z.extractall(ex)
+            _safe_extract(z, ex)
         return _find_audio_root(ex)
 
     # Otherwise: loose files / multiple inputs — flatten into one staged folder.
@@ -280,7 +294,7 @@ def prepare_stem_folder(paths, workdir):
         elif p.suffix.lower() == ".zip":
             ex = Path(tempfile.mkdtemp(prefix="_zip_"))   # outside staged, no duplicate
             with zipfile.ZipFile(p) as z:
-                z.extractall(ex)
+                _safe_extract(z, ex)
             for f in _audio_files_in(_find_audio_root(ex)):
                 _ingest_file(f)
         else:
@@ -348,7 +362,11 @@ class Api:
         can replace and relaunch us. Only meaningful in the packaged app.
         """
         import updater
-        res = updater.apply_update(download_url)
+        # Re-read the feed for the authoritative sha256 (don't trust a value
+        # round-tripped through the UI) and verify the download against it.
+        info = updater.check_for_update(get_version())
+        expected_sha = info.get("sha256", "") if info.get("ok") else ""
+        res = updater.apply_update(download_url, expected_sha)
         if res.get("ok") and res.get("relaunching"):
             def _quit():
                 try:
@@ -528,7 +546,12 @@ class Api:
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", env=env,
             cwd=str(APP_DIR))
-        killer = threading.Timer(self.BUILD_TIMEOUT_SEC, proc.kill)
+        timed_out = {"v": False}
+
+        def _on_timeout():
+            timed_out["v"] = True     # explicit flag — don't infer from tail/exit
+            proc.kill()
+        killer = threading.Timer(self.BUILD_TIMEOUT_SEC, _on_timeout)
         killer.daemon = True
         killer.start()
         result = None
@@ -555,12 +578,15 @@ class Api:
             shutil.rmtree(job_file.parent, ignore_errors=True)
         if result is not None:
             return result
-        # No result marker: the child died hard (native crash) or was killed.
-        why = ("Build timed out after " + str(self.BUILD_TIMEOUT_SEC // 60)
-               + " min" if proc.returncode in (-9, 1) and not tail else
-               "The build engine crashed on this pack (native error, exit "
-               + str(proc.returncode) + "). The rest of the batch continues — "
-               "try this pack again.")
+        # No result marker: the child was killed by the watchdog, or died hard.
+        if timed_out["v"]:
+            why = ("Build timed out after " + str(self.BUILD_TIMEOUT_SEC // 60)
+                   + " min — this pack took too long. The rest of the batch "
+                   "continues; try this pack again or check it isn't enormous.")
+        else:
+            why = ("The build engine crashed on this pack (native error, exit "
+                   + str(proc.returncode) + "). The rest of the batch continues — "
+                   "try this pack again.")
         return {"ok": False, "error": why, "trace": "\n".join(tail[-40:])}
 
     def _build_inline(self, job, st):

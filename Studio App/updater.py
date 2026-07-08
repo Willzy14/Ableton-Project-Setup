@@ -15,6 +15,7 @@ latest.json shape:
      "download_url": "https://.../StemToAbleton.exe",
      "notes": "What changed"}
 """
+import hashlib
 import json
 import re
 import shutil
@@ -90,8 +91,17 @@ def check_for_update(current_version, url=None):
         "available": _semver(latest) > _semver(current_version),
         "latest": latest,
         "download_url": data.get("download_url") or data.get("url") or "",
+        "sha256": (data.get("sha256") or "").strip().lower(),
         "notes": data.get("notes", ""),
     }
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def write_swap_script(new_exe, target_exe, workdir):
@@ -130,9 +140,14 @@ def stage_download(download_url, workdir):
     return dest
 
 
-def apply_update(download_url):
-    """Download the new EXE and spawn the detached swap script. The caller must
-    then exit the app so the script can replace and relaunch it.
+def apply_update(download_url, expected_sha256=""):
+    """Download the new EXE, VERIFY its sha256, then spawn the detached swap
+    script. The caller must then exit the app so the script can replace and
+    relaunch it.
+
+    The feed publishes a `sha256`; if it's present we refuse to swap on a
+    mismatch (a compromised host / corrupted download can't slip a different EXE
+    onto Sam's machine). A feed with no sha256 still works but is unverified.
     """
     if not is_frozen():
         return {"ok": False, "error": "Update-apply only runs in the packaged app."}
@@ -144,6 +159,14 @@ def apply_update(download_url):
         new_exe = stage_download(download_url, work)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": "Download failed: " + str(exc)}
+    expected = (expected_sha256 or "").strip().lower()
+    if expected:
+        actual = _sha256(new_exe)
+        if actual != expected:
+            shutil.rmtree(work, ignore_errors=True)
+            return {"ok": False, "error": "Update REJECTED — the downloaded file's "
+                    "checksum didn't match the feed (expected " + expected[:12]
+                    + "…, got " + actual[:12] + "…). Not installing."}
     bat = write_swap_script(new_exe, target, work)
     subprocess.Popen(["cmd", "/c", str(bat)], creationflags=_DETACHED, close_fds=True)
     return {"ok": True, "relaunching": True}

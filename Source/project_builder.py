@@ -727,16 +727,34 @@ def session_report_path(project_folder):
     return old if old.exists() and not new.exists() else new
 
 
+def _write_json_atomic(path, obj, attempts=5):
+    """Write JSON atomically (temp + os.replace) with a short Dropbox-lock retry.
+    The Studio App reads Session Report.json to show the result card, so a
+    transient lock shouldn't lose it and leave the card without its result."""
+    import time
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    for _ in range(attempts):
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(obj, fh, indent=2)
+            os.replace(tmp, path)
+            return True
+        except (PermissionError, OSError):
+            time.sleep(1.0)
+    try:
+        tmp.unlink()
+    except OSError:
+        pass
+    return False
+
+
 def _write_session_report(project_folder, report):
     """Write the machine-readable Session Report.json (the Studio App reads it to
     show a build Result Card) plus a short human-readable Session Report.txt.
     Both live in the Reports/ subfolder to keep the project root tidy."""
     rdir = _reports_dir(project_folder)
-    try:
-        with open(rdir / "Session Report.json", "w", encoding="utf-8") as fh:
-            json.dump(report, fh, indent=2)
-    except Exception:  # noqa: BLE001 — reporting must never fail a good build
-        pass
+    _write_json_atomic(rdir / "Session Report.json", report)  # atomic + lock-retry
     try:
         lines = [
             report.get("project_name", ""),

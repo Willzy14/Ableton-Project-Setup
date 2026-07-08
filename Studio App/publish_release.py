@@ -78,9 +78,25 @@ def main(argv=None):
                                 "TODO-set-release_base-in-update_feed.json")
 
     DIST.mkdir(parents=True, exist_ok=True)
-    latest = {"version": new, "download_url": download_url, "notes": args.notes}
+    # Checksum the built EXE so the app can verify the download before swapping.
+    # Only present once the EXE exists (the --url stamp runs AFTER the build).
+    sha256 = ""
+    exe_path = DIST / EXE_NAME
+    if exe_path.exists():
+        import hashlib
+        h = hashlib.sha256()
+        with open(exe_path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        sha256 = h.hexdigest()
+    latest = {"version": new, "download_url": download_url,
+              "sha256": sha256, "notes": args.notes}
     (DIST / "latest.json").write_text(json.dumps(latest, indent=2) + "\n",
                                       encoding="utf-8")
+    if not sha256:
+        print("NOTE: no EXE at " + str(exe_path) + " yet, so latest.json has an "
+              "empty sha256 — re-run this (with --url, no --bump) AFTER building "
+              "the EXE so the download is checksum-verified.")
 
     print("VERSION: %s -> %s" % (current, new))
     print("Wrote " + str(DIST / "latest.json") + ":")
