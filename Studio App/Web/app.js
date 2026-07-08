@@ -23,22 +23,28 @@ function api() {
 }
 
 window.addEventListener("pywebviewready", init);
-// Fallback for browser preview (no pywebview): still render the shell.
-setTimeout(() => { if (!State.booted) init(); }, 400);
+// Browser-preview fallback: if no pywebview API ever arrives, boot the shell so
+// the page still renders. Longer wait so a slow native launch isn't raced into
+// the rainbow-fallback palette — and even if the fallback boots first, a later
+// 'pywebviewready' re-runs init() and UPGRADES to the real Ableton palette +
+// profiles (State.booted locks only on a real, API-backed boot).
+setTimeout(init, 2500);
 
 async function init() {
-  if (State.booted) return;
-  State.booted = true;
+  if (State.booted) return;                 // a real (API-backed) boot already happened
   const a = api();
   if (a) {
+    State.booted = true;                     // lock ONLY once the backend is really here
     const boot = await a.get_bootstrap();
-    State.palette = boot.palette;
+    State.palette = boot.palette;            // the real Ableton palette (has white + greys)
     State.colorCategories = boot.colorCategories;
     State.profiles = boot.profiles;
     State.settings = boot.settings;
     State.version = boot.version;
   } else {
-    // preview-only defaults
+    if (State.previewBooted) return;         // already showing the preview shell
+    State.previewBooted = true;              // PROVISIONAL — pywebviewready can still upgrade us
+    // preview-only defaults (a plain browser, no Ableton palette available)
     State.palette = Array.from({ length: 70 }, (_, i) => `hsl(${i * 5},70%,55%)`);
     State.colorCategories = ["drums", "bass", "music", "vocals", "fx", "sends"];
     State.profiles = [{ name: "Default", colors: {} }];
@@ -51,6 +57,7 @@ async function init() {
   hydrateSubgroups();
   renderPreview();
   if (State.projects.length === 0) addProject();
+  else renderQueue();   // recolour existing cards if this is an upgrade re-boot
   wireGlobalButtons();
 }
 
