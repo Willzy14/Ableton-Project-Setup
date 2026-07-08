@@ -78,13 +78,13 @@ The report is written then re-read; a Dropbox lock on `Reports/Session Report.js
 but the UI shows editable controls / no flags. **Fix:** `build_project` returns the report object; the
 worker passes it even if file IO fails; UI shows an explicit "report missing" state.
 
-**M3 · Full-mix / bus detection failures are swallowed → a full mix summed into the flat ref.** (Codex #5 + MiniMax M6)
+**M3 · ✅ DONE (2026-07-08) · Full-mix / bus detection failures are swallowed → a full mix summed into the flat ref.** (Codex #5 + MiniMax M6)
 If numpy is absent or analysis errors, an ambiguous full mix (e.g. `Current.wav`) stays in `music` and pollutes
 the bounce. Bus detection also only sees the first 180 s (a bus silent at the head is missed — known). **Fix:**
 flag "safety analysis unavailable for X"; consider parking failed-analysis ambiguities as muted refs; use the
 loudest sustained window (not elapsed time) for bus pursuit.
 
-**M4 · `set_global_tempo` / `set_track_name` don't confirm the patch landed.** (MiniMax M2/M4)
+**M4 · ✅ MOSTLY DONE via U1 (inline validate now flags a tempo mismatch) · `set_global_tempo` / `set_track_name` don't confirm the patch landed.** (MiniMax M2/M4)
 Both depend on template line layout; a future Ableton/template change can silently no-op (wrong tempo, stale
 `UserName`). **Fix:** assert the value changed post-patch and raise a flag if not; see U1.
 
@@ -110,18 +110,18 @@ swap; pin host/scheme.
 - **L1 · `BUS_TRACK_COLOR = 2`** but docs/spec say grey **37** ✓ ([project_builder.py:65](../Source/project_builder.py)) — buses don't read as inactive. *(Codex #10.)*
 - **L2 · Validator uses `replace("/","\\")`** ([validate_project.py:81](../Source/validate_project.py)) — false "missing audio" on Mac. *(Codex #9.)* Fix: `PurePosixPath(rel).parts`.
 - **L3 · ✅ DONE (2026-07-06) · Zero-frame clip** from a header-only WAV renders as a phantom in Ableton. *(MiniMax M3.)* Fixed: the clip loop skips any region with `len ≤ 0`.
-- **L4 · `path.resolve()` in hot loops** can stall on a stale network share. *(MiniMax L1.)* Fix: `.absolute()`.
+- **L4 · ✅ PARTLY DONE (2026-07-08 — safe half; claim-set left on resolve()) · `path.resolve()` in hot loops** can stall on a stale network share. *(MiniMax L1.)* Fix: `.absolute()`.
 - **L5 · Pure-numeric stem names** ("01.wav") dedupe to "Vox/Vox 2" display names (clip name still correct — cosmetic). *(MiniMax L3.)*
 
 ---
 
 ## Upgrades (value vs effort)
 
-- **U1 · Inline validate at the end of `patch_project`** (LOW effort, HIGH value) — a CLI build currently has
+- **U1 · ✅ DONE · Inline validate at the end of `patch_project`** (LOW effort, HIGH value) — a CLI build currently has
   no safety net; call `validate_path` and fold errors into flags. Catches every silent template-break (M4).
-- **U2 · Atomic `.als` write** — the fix for A1; ~10 lines.
-- **U3 · One `safe_filename()` helper** for user-typed labels becoming FS paths (a `<` in a label shouldn't blow up a build).
-- **U4 · CRNN hand-off shim in `bpm_detector`** — a documented plug-in point so the Kick Detector drops in with one import + flag (no rewrite now).
+- **U2 · ✅ DONE · Atomic `.als` write** — the fix for A1; ~10 lines.
+- **U3 · ✅ DONE · One `safe_filename()` helper** for user-typed labels becoming FS paths (a `<` in a label shouldn't blow up a build).
+- **U4 · ✅ DONE (seam comment) · CRNN hand-off shim in `bpm_detector`** — a documented plug-in point so the Kick Detector drops in with one import + flag (no rewrite now).
 - **U5 · Surface "N silent / N skipped" as a card badge** pre-open, not just a buried flag.
 - **U6 · Test-gap fill** — `set_track_name` (both name fields), `element_key` pairing, `compress_als` under lock, zip-ingest edge packs, wav_staging leak.
 
