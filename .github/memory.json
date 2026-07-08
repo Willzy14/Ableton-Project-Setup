@@ -2,15 +2,19 @@
   "project": {
     "name": "Ableton Project Setup",
     "type": "tool",
-    "description": "Automated Ableton Live project builder — takes raw stems, classifies them, detects BPM, and creates a fully laid-out .als file matching Sam's mixing workflow.",
+    "description": "Automated Ableton Live project builder \u2014 takes raw stems, classifies them, detects BPM, and creates a fully laid-out .als file matching Sam's mixing workflow.",
     "location": "Wired Masters Dropbox/Sam Wills/0.1---GIT HUB---/Ableton Project Setup/",
-    "stack": ["Python", "gzip", "Ableton Live 12.3 ALS format"],
+    "stack": [
+      "Python",
+      "gzip",
+      "Ableton Live 12.3 ALS format"
+    ],
     "repo_url": ""
   },
   "modules": {
     "Source/project_builder.py": {
       "purpose": "Main orchestrator: scans stem folders, classifies stems, detects BPM, copies audio, builds flat references, detects group buses, and patches the final ALS.",
-      "notes": "Contains single-version and multi-version build paths. As of 2026-06-26 it can call audio_ml_classify.py for filename-unknown stems. Multi-version later stacks are placed on phrase slots, then nudged together by the earliest credible kick-named layer. Since 2026-07-02: apply_ableton_folder_icon() gives built projects the Ableton folder icon (Desktop.ini + AProject.ico, Windows-only, never fails a build); reports (Session Report + ML Classification Report) write into a Reports/ subfolder via _reports_dir()/session_report_path() instead of the project root."
+      "notes": "Contains single-version and multi-version build paths. As of 2026-06-26 it can call audio_ml_classify.py for filename-unknown stems. Multi-version later stacks are placed on phrase slots, then nudged together by the earliest credible kick-named layer. Since 2026-07-02: apply_ableton_folder_icon() gives built projects the Ableton folder icon (Desktop.ini + AProject.ico, Windows-only, never fails a build); reports (Session Report + ML Classification Report) write into a Reports/ subfolder via _reports_dir()/session_report_path() instead of the project root. 2026-07-06/08: _resolve_project_bpm() treats a filename BPM as a hint verified against the audio (never authoritative); _safe_filename() sanitises user-typed names; _make_project_context()/_patch_and_validate()/_finish_project() are the shared head/tail extracted from both build paths in the M1 refactor (see Documentation/M1_REFACTOR_PLAN.md, complete) \u2014 multi-version now has parity with single for silent-stem parking, wet/dry dry-park, and updated-stem matching."
     },
     "Source/stem_classifier.py": {
       "purpose": "Filename-based classification and display track-name generation.",
@@ -30,7 +34,7 @@
     },
     "Source/bpm_detector.py": {
       "purpose": "Pure-stdlib BPM detection from kick/drum onsets.",
-      "notes": "Returns both folded grid phase and first_actual_onset_sec so multi-version alignment can use the physical timing anchor."
+      "notes": "Returns both folded grid phase and first_actual_onset_sec so multi-version alignment can use the physical timing anchor. A CRNN Kick Detector hand-off seam is documented (comment only) at the onset step in detect_bpm \u2014 Sam is training a dedicated model; do not touch BPM/kick detection until he says it's ready."
     },
     "Source/bounce.py": {
       "purpose": "Flat-reference WAV summing with numpy fast path and stdlib fallback.",
@@ -41,8 +45,8 @@
       "notes": "Returns the category's stems reordered + tagged with subgroup_key/name/color, or None when no useful sub-grouping applies. A sub-group needs 2+ members; conservative on drums/music. Consumed by project_builder._apply_subgroups; rendered as nested GroupTracks by als_patcher._apply_track_groups."
     },
     "Source/versions.py": {
-      "purpose": "Detects alternate-version subfolders by mirrored element keys.",
-      "notes": "Same-folder name-token versions are not implemented yet."
+      "purpose": "Detects alternate-version subfolders/name-tokens by mirrored element keys; pairs elements across versions.",
+      "notes": "element_key() strips a trailing export index before pairing (2026-07-06). sorted_element_key() is an order-independent fallback (consulted only when element_key misses) that pairs a reversed-word-order element like FX_FILLS/FILLS_FX across versions. dry_pair_key() is a wet/dry-stripped order-independent key for pairing dry vocal parks across versions (element_key alone collides every _DRY stem to 'dry')."
     },
     "Source/validate_project.py": {
       "purpose": "Canonical generated-project validator for ALS gzip/XML readability, tempo, tempo automation, Session Time, refs, FLAT REF, and file refs.",
@@ -56,7 +60,7 @@
   "sessions": [
     {
       "date": "2026-05-19",
-      "summary": "Project bootstrap — created context files, reviewed ABLETON_INTERACTION.md from Automated DJ Mixes. Waiting for Sam's reference ALS files to analyse his mix layout.",
+      "summary": "Project bootstrap \u2014 created context files, reviewed ABLETON_INTERACTION.md from Automated DJ Mixes. Waiting for Sam's reference ALS files to analyse his mix layout.",
       "files_changed": [
         "Documentation/AI_CONTEXT.md",
         ".github/memory.json",
@@ -71,7 +75,7 @@
     },
     {
       "date": "2026-06-25",
-      "summary": "Three features: (1) pure-stdlib BPM auto-detection (Source/bpm_detector.py) borrowed from Automated DJ Mixes (attack_onsets + lattice_fit), no numpy/scipy/Demucs; bpm arg now optional, detects from kick; validated exact on 4 kicks. (2) Clip naming — track=display, clip=original filename. (3) Classifier patterns BVs/Tops/Fills/CABASA/DRM_/Ref Bounce. (4) Replaced duplicated-stems flat-reference GroupTrack with a single bounced flat-ref track (Source/bounce.py, pure-stdlib stem sum -> float32 WAV): color 37, muted, Ext. Out, last; supplied ref/master files kept as separate match tracks, never summed. Retired the ref-group-expand bug. (5) Working-track grouping: drums/music/vocals/fx with 2+ stems wrapped in a GroupTrack (audible, Main, expanded, category-coloured; children -> AudioOut/GroupTrack + TrackGroupId); kick/bass/sends standalone. (6) bounce.py numpy fast path (~15x) with bit-identical pure-stdlib fallback.",
+      "summary": "Three features: (1) pure-stdlib BPM auto-detection (Source/bpm_detector.py) borrowed from Automated DJ Mixes (attack_onsets + lattice_fit), no numpy/scipy/Demucs; bpm arg now optional, detects from kick; validated exact on 4 kicks. (2) Clip naming \u2014 track=display, clip=original filename. (3) Classifier patterns BVs/Tops/Fills/CABASA/DRM_/Ref Bounce. (4) Replaced duplicated-stems flat-reference GroupTrack with a single bounced flat-ref track (Source/bounce.py, pure-stdlib stem sum -> float32 WAV): color 37, muted, Ext. Out, last; supplied ref/master files kept as separate match tracks, never summed. Retired the ref-group-expand bug. (5) Working-track grouping: drums/music/vocals/fx with 2+ stems wrapped in a GroupTrack (audible, Main, expanded, category-coloured; children -> AudioOut/GroupTrack + TrackGroupId); kick/bass/sends standalone. (6) bounce.py numpy fast path (~15x) with bit-identical pure-stdlib fallback.",
       "files_changed": [
         "Source/bpm_detector.py",
         "Source/bounce.py",
@@ -136,7 +140,7 @@
     },
     {
       "date": "2026-06-29",
-      "summary": "First real production run: built Replicage - Amen [Sound Better] from 41 desktop stems into 2. Ongoing Stem Mixes (single-version; the Radio/Extended/Dub arrangements are baked end-to-end into one long timeline per stem, so single-version is correct). Sam happy, ~30 min saved. Then shipped two stem-handling features per Sam's spec: (1) wet/dry VOCALS-ONLY + explicit WET+DRY pairs only — find_dry_stems requires a wet-token sibling sharing base identity (export index + wet/dry tokens stripped), build_project passes only vocal stems; the dry copy is parked in a muted, collapsed grey Dry group (color 37), out of the flat-ref sum; a music ARP DRY beside a plain ARP is left untouched. (2) Empty/silent stems (peak window RMS < SILENCE_FLOOR_DB -60 dBFS via find_audio_regions(return_peak=True)) moved to the very bottom with their own colour (SILENT_TRACK_COLOR 12), out of layout + sum. als_patcher group runs now carry per-run muted/unfolded/group_color. Decision recorded: BPM always rounded (whole or half), never warp. Validated: test_wet_dry 7/7, combined synthetic e2e inspected in ALS, validate_project PASS, full suite green.",
+      "summary": "First real production run: built Replicage - Amen [Sound Better] from 41 desktop stems into 2. Ongoing Stem Mixes (single-version; the Radio/Extended/Dub arrangements are baked end-to-end into one long timeline per stem, so single-version is correct). Sam happy, ~30 min saved. Then shipped two stem-handling features per Sam's spec: (1) wet/dry VOCALS-ONLY + explicit WET+DRY pairs only \u2014 find_dry_stems requires a wet-token sibling sharing base identity (export index + wet/dry tokens stripped), build_project passes only vocal stems; the dry copy is parked in a muted, collapsed grey Dry group (color 37), out of the flat-ref sum; a music ARP DRY beside a plain ARP is left untouched. (2) Empty/silent stems (peak window RMS < SILENCE_FLOOR_DB -60 dBFS via find_audio_regions(return_peak=True)) moved to the very bottom with their own colour (SILENT_TRACK_COLOR 12), out of layout + sum. als_patcher group runs now carry per-run muted/unfolded/group_color. Decision recorded: BPM always rounded (whole or half), never warp. Validated: test_wet_dry 7/7, combined synthetic e2e inspected in ALS, validate_project PASS, full suite green.",
       "files_changed": [
         "Source/als_patcher.py",
         "Source/stem_classifier.py",
@@ -147,7 +151,7 @@
         ".github/ai-activity-log.md"
       ],
       "pending": [
-        "Design + build a studio UI front-end (drag-drop WAV/AIFF/ZIP, multi-project queue with per-project title, static output folder, per-user Ableton colour setup) — discussed 2026-06-29",
+        "Design + build a studio UI front-end (drag-drop WAV/AIFF/ZIP, multi-project queue with per-project title, static output folder, per-user Ableton colour setup) \u2014 discussed 2026-06-29",
         "Add ML subprocess timeout/temp cleanup",
         "Implement same-folder name-token versions",
         "Consider applying wet/dry + silent-stem handling to the multi-version build path too"
@@ -194,7 +198,7 @@
         ".github/ai-activity-log.md"
       ],
       "pending": [
-        "Sam: run the Studio App (pip install pywebview; Run Studio App.bat) — native window look/feel + sub-groups toggle",
+        "Sam: run the Studio App (pip install pywebview; Run Studio App.bat) \u2014 native window look/feel + sub-groups toggle",
         "Sam: run build_exe.py, stand up the public releases feed, set feed_url/release_base in update_feed.json, EXE smoke test",
         "Apply nested sub-groups to the multi-version build path (currently single-version only)",
         "ML subprocess cleanup/timeouts (Codex handoff list)",
@@ -228,6 +232,46 @@
         "CRNN Kick Detector integration (Sam's dedicated project) will become the tempo anchor - BPM/kick detection work is on hold until then",
         "Apply nested sub-groups to the multi-version build path (still open from 2026-06-30)"
       ]
+    },
+    {
+      "date": "2026-07-08",
+      "summary": "Two big threads, both complete and pushed. (1) The 3-brain audit (Claude+Codex+MiniMax, started 2026-07-06) is now fully implemented except two deliberately deferred items (deep-nesting classification, RF64 >4GB) -- see Documentation/FULL_AUDIT_2026-07.md. Landed: atomic/lock-safe .als write (a Dropbox lock mid-write no longer corrupts the project), unreadable stems surfaced in the report/flags instead of silently dropped, inline .als validation at the end of every build, cross-version element pairing fixed, WAV data-size sentinel capped (no OOM), zero-length clip guard, zip-slip-safe Studio App ingest, timeout-vs-crash reporting fixed, self-updater sha256 verification, a numpy-absent safety flag, and a documented CRNN hand-off seam. (2) M1 refactor (unify single/multi-version build paths) COMPLETE: 3-brain-cleared plan (MiniMax caught a real bug in the first dry-vocal rule before any code was written), a before/after safety harness (Scripts/m1_refactor_harness.py, which also caught+fixed a real pre-existing multi+bus crash), shared head/tail extraction (proven byte-identical on real packs), and all three multi-version parity gaps closed: silent-stem parking, wet/dry dry-park (via new dry_pair_key), updated-stem matching. (3) Three real bugs fixed from Sam's HARTY project: multi-version flat-ref filename exceeded Windows MAX_PATH (sample showed offline in Ableton) -- shortened to 'FLAT REF.wav'; FX_FILLS/FILLS_FX classified as drums instead of fx (added fx-fill patterns to FX_STRONG_PATTERNS); the two versions' fills didn't pair because the words were reversed (added sorted_element_key as an order-independent fallback). Suite 18->24 across the whole session.",
+      "files_changed": [
+        "Source/project_builder.py",
+        "Source/versions.py",
+        "Source/als_patcher.py",
+        "Source/stem_classifier.py",
+        "Source/stem_analysis.py",
+        "Source/bpm_detector.py",
+        "Source/validate_project.py",
+        "Studio App/engine_api.py",
+        "Studio App/updater.py",
+        "Studio App/publish_release.py",
+        "Scripts/m1_refactor_harness.py (new)",
+        "Scripts/audit_classifier_vs_projects.py (new)",
+        "Tests/test_bpm_reconcile.py (new)",
+        "Tests/test_classifier_ground_truth.py (new)",
+        "Tests/test_audit_fixes.py (new)",
+        "Tests/test_studio_app_hardening.py (new)",
+        "Tests/test_multiversion_silent.py (new)",
+        "Tests/test_multiversion_wetdry.py (new)",
+        "Tests/test_multiversion_updated.py (new)",
+        "Tests/test_multiversion_ml_classification.py",
+        "Tests/test_multiversion_parity.py",
+        "Documentation/FULL_AUDIT_2026-07.md (new)",
+        "Documentation/M1_REFACTOR_PLAN.md (new)",
+        "Documentation/AI_CONTEXT.md",
+        "Documentation/TOOLBOX.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Sam: rebuild HARTY (and any multi-version project with a long producer version-folder name) to pick up the flat-ref MAX_PATH fix + FX Fills classification/pairing fix",
+        "Sam: run the Studio App and eyeball the branding/drag-drop/tempo-rebuild control on a real machine",
+        "CRNN Kick Detector integration -- Sam actively training (600+ tracks via Demucs as of 2026-07-06); do not touch BPM/kick detection until he says it's ready",
+        "Deep-nesting classification (audit A4) and RF64 >4GB support -- deliberately deferred, need their own focused sessions",
+        "Sam-side EXE/updater feed hosting still outstanding from earlier sessions"
+      ]
     }
   ],
   "decisions": [
@@ -249,11 +293,11 @@
     {
       "date": "2026-06-25",
       "decision": "Group-bus / sub-mix stems (a bus left among individual stems) are detected via find_group_buses() in stem_analysis.py: stems are sample-aligned, so a bus is the sum of its members; a non-negative greedy matching pursuit (Gram-matrix space) flags any stem reconstructed >88% by a positive sum of >=2 others. Buses are parked muted/grey (37) at the very bottom below refs, kept for recall, and excluded from the flat-ref sum. Non-negativity flags the bus, never its members.",
-      "why": "Sam: this is a big, frequent problem on real packs — a producer leaves a group bus among the stems, you press play and everything sounds wrong (double-counted), then have to hunt for which stem is the bus. Filenames/spectra can't distinguish a bus from a stem, but the sample-aligned sum relationship can. Validated: caught Coldabank 'All Drums' + Far Away 'BASS EGYBE' (=b+b_3) with no false positives."
+      "why": "Sam: this is a big, frequent problem on real packs \u2014 a producer leaves a group bus among the stems, you press play and everything sounds wrong (double-counted), then have to hunt for which stem is the bus. Filenames/spectra can't distinguish a bus from a stem, but the sample-aligned sum relationship can. Validated: caught Coldabank 'All Drums' + Far Away 'BASS EGYBE' (=b+b_3) with no false positives."
     },
     {
       "date": "2026-06-25",
-      "decision": "Ambiguous stems get an audio-content check (Source/stem_analysis.py, numpy FFT): a file filenames can't place that reads as a full mix (crest<=5 + 6+ bands + sustain>=0.6) is moved to references so it's never summed into the flat bounce. Approach borrowed from Loudness Leveller (band energy) + Automated DJ Mixes (low-end) but implemented numpy-only (no librosa/ffmpeg); filename-only fallback if numpy absent. Audio kick-detection was tried and dropped — kick vs bass overlap too much on aggregate spectral features; filenames (incl. 'K') handle kicks.",
+      "decision": "Ambiguous stems get an audio-content check (Source/stem_analysis.py, numpy FFT): a file filenames can't place that reads as a full mix (crest<=5 + 6+ bands + sustain>=0.6) is moved to references so it's never summed into the flat bounce. Approach borrowed from Loudness Leveller (band energy) + Automated DJ Mixes (low-end) but implemented numpy-only (no librosa/ffmpeg); filename-only fallback if numpy absent. Audio kick-detection was tried and dropped \u2014 kick vs bass overlap too much on aggregate spectral features; filenames (incl. 'K') handle kicks.",
       "why": "A test batch of 5 random finished mixes showed cryptically-named full mixes ('Current', 'TEST MIX') being summed into the flat ref and polluting it (Far Away peaked 3.85). Filenames are unreliable on messy real packs; audio content is the robust signal. Crest factor (compression) is the key full-mix discriminator, tuned/validated on labelled real files."
     },
     {
@@ -270,6 +314,16 @@
       "date": "2026-06-26",
       "decision": "Multi-version later sections are placed as a whole stack on the next phrase slot, then the entire stack is nudged together using the earliest credible kick-named layer as the grid anchor.",
       "why": "Radio edits can have no dry kick at the start. Fallon proved that anchoring to the dry kick or to the locator is wrong; the musical stack must stay locked together and only receive the small left/right nudge Sam would do by eye in Ableton."
+    },
+    {
+      "date": "2026-07-06",
+      "decision": "A filename-labelled BPM is a HINT, not authoritative -- it's grid-checked against the audio, which is the arbiter. On a conflict the tool uses the audio-detected tempo and raises a flag (never silently keeps the wrong label, never hard-stops).",
+      "why": "Sam's Cole Horton pack had stems tagged '130BPM' but the track was really 132 -- the old code trusted the label outright and never even ran the detector."
+    },
+    {
+      "date": "2026-07-08",
+      "decision": "M1 refactor extracts the shared HEAD (_make_project_context) and TAIL (_patch_and_validate/_finish_project) from the single- and multi-version build paths, but keeps the two middle LAYOUT logics separate (single=one timeline, multi=versions stacked on shared tracks) rather than forcing a full pv-based unification.",
+      "why": "A full unification would drag Fallon's version-stack alignment model into simple single-version builds and risk subtly changing behaviour Sam relies on daily; the audit's actual complaint (duplicated logic silently drifting apart) is fixed by sharing the head/tail and closing the three real parity gaps (silent/wet-dry/updated-stem), which a 3-brain review (Codex+MiniMax) confirmed was the right scope."
     }
   ]
 }

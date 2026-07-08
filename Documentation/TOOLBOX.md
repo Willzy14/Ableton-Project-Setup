@@ -76,7 +76,11 @@ py -3.13 Source\validate_project.py "<project-folder-or-als>" --expect-tempo 160
 - `Source/stem_analysis.py` - Lightweight numpy audio analysis for full-mix and group-bus detection.
 - `Source/als_patcher.py` - Raw-text ALS patching engine. Do not replace with XML parsing. `find_audio_regions(return_peak=True)` returns TRUE PEAK (not windowed RMS, since 2026-07-02 — a sparse stem like a quiet shaker needs true peak to not be false-flagged as silent); silence floor `SILENCE_FLOOR_DB = -66 dBFS`. Group runs support per-run muted/unfolded/colour (used by the parked "Dry" group).
 - `Source/bounce.py` - Flat-reference WAV summing, numpy fast path plus stdlib fallback.
-- `Source/versions.py` - Multi-version package detection.
+- `Source/versions.py` - Multi-version package detection. `element_key()` strips a trailing 1-2 digit export index before pairing (2026-07-06). `sorted_element_key()` (order-independent fallback, consulted only when `element_key` misses — pairs a reversed-word-order element like `FX_FILLS`/`FILLS_FX` across versions). `dry_pair_key()` (wet/dry-stripped, order-independent — needed because `element_key` collides every `_DRY` stem to `'dry'`).
+- `Source/bpm_detector.py` - Pure-stdlib BPM detection. `detect_bpm()` has a marked CRNN Kick Detector hand-off seam at the onset step (comment only, no dead code) — see memory `kick-detector-integration-planned`.
+- `Source/project_builder.py` additions (2026-07-06/08): `_resolve_project_bpm()` — a filename-labelled BPM is a HINT verified against the audio (never trusted outright); `_safe_filename()` — sanitises user-typed names before they become folder/`.als` paths; `_analysis_off_flags()` — flags when numpy is absent (full-mix/bus safety nets can't run); `_make_project_context()` / `_patch_and_validate()` / `_finish_project()` — the shared head/tail extracted from both build paths in the M1 refactor (see `Documentation/M1_REFACTOR_PLAN.md`, complete).
+- `Scripts/m1_refactor_harness.py` - Before/after safety harness for the M1 refactor: rebuilds two real fixtures (Admonic=single, Fallon=multi) into fixed folders and diffs decompressed `.als` XML + report for byte-identical behaviour. `snapshot` / `compare` modes. Re-run after any `project_builder.py` build-path change.
+- `Scripts/audit_classifier_vs_projects.py` - Mines every finished project's clip name→colour as classifier ground truth; reports agreement rate + ranked gaps. Re-run after any `stem_classifier.py` change.
 
 ## Validation Notes
 
