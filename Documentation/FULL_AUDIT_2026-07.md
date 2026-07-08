@@ -67,11 +67,11 @@ directly; a pack whose audio lives only inside `REF/` gets diverted to A/B refs 
 
 ## Medium
 
-**M1 · Single- vs multi-version paths duplicate ~150 lines → parity drift.** (MiniMax M1 + brief)
+**M1 · ⏳ LINED UP · Single- vs multi-version paths duplicate ~150 lines → parity drift.** (MiniMax M1 + brief)
 Bus-detect, dry-park (missing in multi!), preseeded-ref, refcompare, report, icon all coded twice
 ([project_builder.py](../Source/project_builder.py) ~1015-1420 vs ~1503-1818). A change to one silently
-skips the other (has happened before). **Fix:** extract a shared `_finalize(pv, ...)`; single-version wraps
-its set as a one-element `pv`.
+skips the other (has happened before). **Plan Codex-reviewed → [M1_REFACTOR_PLAN.md](M1_REFACTOR_PLAN.md)**
+(extract head+tail, keep middles, close parity gaps per-version; NOT a full `pv` merge). Its own session.
 
 **M2 · ✅ DONE (2026-07-06, lighter fix) · Session-report IO failure hides the whole result card.** (Codex #4 + MiniMax M5)
 The report is written then re-read; a Dropbox lock on `Reports/Session Report.json` → the build validates
