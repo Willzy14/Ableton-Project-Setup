@@ -24,7 +24,7 @@ from als_patcher import (patch_project, find_audio_regions, CLIP_START_BEATS,
 from bpm_detector import detect_bpm
 from bounce import sum_stems_to_wav
 from stem_analysis import audio_label, find_group_buses, analysis_available
-from versions import detect_versions, element_key, sorted_element_key
+from versions import detect_versions, element_key, sorted_element_key, dry_pair_key
 
 VERSION_GAP_BARS = 16   # gap between version sections on the timeline
 
@@ -1586,12 +1586,21 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
     bus_stems = [s for s in mix_stems if s["file_path"] in bus_paths]
     mix_stems = [s for s in mix_stems if s["file_path"] not in bus_paths]
 
+    # Wet/dry (VOCALS ONLY, explicit WET+DRY pair) — same rule as the single path,
+    # applied PER VERSION so a Radio dry never falsely pairs with an Extended wet.
+    # The DRY half is pulled OUT of the mix (and so out of this version's flat-ref
+    # bounce, which sums mix_stems) and parked in a muted "Dry" group by the caller.
+    vocal_paths = [s["file_path"] for s in mix_stems if s["category"] == "vocals"]
+    dry_paths = set(find_dry_stems(vocal_paths))
+    dry_stems = [s for s in mix_stems if s["file_path"] in dry_paths]
+    mix_stems = [s for s in mix_stems if s["file_path"] not in dry_paths]
+
     ref_stems = []
     for f in references:
         dest = _copy(f)
         ref_stems.append({"element_key": element_key(f), "orig_name": f.stem,
                           "file_path": dest, "rel_path": rel_prefix + f.name})
-    return mix_stems, ref_stems, bus_stems, v_skipped
+    return mix_stems, ref_stems, bus_stems, dry_stems, v_skipped
 
 
 def build_multiversion_project(versions, artist, title, label, bpm, output_base,
@@ -1633,15 +1642,17 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         rel_prefix = "Audio/" + vname + "/"
         print("\n[" + v["name"] + "] processing " + str(len(v["files"])) + " files...")
         report_path = _reports_dir(project_folder) / ("ML Classification Report - " + vname + ".txt")
-        mix, refs, buses, v_skipped = _process_version_files(
+        mix, refs, buses, drys, v_skipped = _process_version_files(
             v["files"], audio_folder / vname, rel_prefix,
             use_ml=use_ml, ml_report_path=report_path,
             category_colors=category_colors,
         )
         mv_pre_skipped += v_skipped
-        print("  mix=" + str(len(mix)) + " refs=" + str(len(refs)) + " buses=" + str(len(buses)))
+        print("  mix=" + str(len(mix)) + " refs=" + str(len(refs))
+              + " buses=" + str(len(buses)) + " dry=" + str(len(drys)))
         pv.append({"name": v["name"], "vname": vname, "rel_prefix": rel_prefix,
-                   "vdir": audio_folder / vname, "mix": mix, "refs": refs, "buses": buses})
+                   "vdir": audio_folder / vname, "mix": mix, "refs": refs,
+                   "buses": buses, "dry": drys})
 
     bpm_meta = None
     bpm_flags = []
@@ -1798,6 +1809,36 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
             all_stems.remove(t)
             mv_silent.append(t)
 
+    # Dry-park tracks: the DRY half of a wet/dry vocal pair, shared across versions
+    # by a wet/dry-stripped key (element_key alone keys every '_DRY' to 'dry'),
+    # parked in a muted, collapsed grey "Dry" group — like the single path. Already
+    # out of each version's flat-ref bounce (pulled from p["mix"] upstream).
+    dry_tracks = []
+    dry_by_key = {}
+    for k, p in enumerate(pv):
+        for s in p.get("dry", []):
+            dkey = dry_pair_key(s["file_path"])
+            t = dry_by_key.get(dkey)
+            if t is None:
+                t = {"name": s["orig_name"], "clip_name": s["orig_name"],
+                     "category": "vocals", "color": s["color"],
+                     "file_path": s["file_path"], "rel_path": s["rel_path"],
+                     "regions": s["regions"], "base_start_beat": offsets[k],
+                     "extra_clips": [], "group_key": "dry", "group_name": "Dry",
+                     "group_muted": True, "group_unfolded": False,
+                     "group_color": DRY_GROUP_COLOR}
+                dry_by_key[dkey] = t
+                dry_tracks.append(t)
+            else:
+                t["extra_clips"].append({
+                    "file_path": s["file_path"], "rel_path": s["rel_path"],
+                    "regions": s["regions"], "start_beat": offsets[k],
+                    "clip_name": s["orig_name"]})
+    all_stems += dry_tracks
+    if dry_tracks:
+        print("  wet/dry: " + str(len(dry_tracks)) + " dry vocal(s) parked in a "
+              "muted 'Dry' group")
+
     # FLAT REF: one track, a bounce clip per version at each version's offset
     if primary.get("bounce_path"):
         flat = {"name": "FLAT REF", "clip_name": _version_label(0) + " FLAT REF",
@@ -1926,7 +1967,8 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                        for cat in sorted(cat_counts, key=lambda c: CATEGORIES[c]["order"])},
         "groups": _build_groups_report(primary_tracks),
         "buses": sorted({s["orig_name"] for p in pv for s in p["buses"]}),
-        "dry_parked": [], "silent": [t["clip_name"] for t in mv_silent],
+        "dry_parked": [t["clip_name"] for t in dry_tracks],
+        "silent": [t["clip_name"] for t in mv_silent],
         "references_supplied": sum(len(p["refs"]) for p in pv),
         "references_preseeded": len(preseeded_refs),
         "updated_stems": [Path(f).stem for f in updated_files],

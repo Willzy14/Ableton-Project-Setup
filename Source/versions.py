@@ -86,6 +86,20 @@ def sorted_element_key(path):
     return " ".join(toks)
 
 
+def dry_pair_key(path):
+    """Key for pairing the DRY half of a wet/dry vocal pair across versions: the
+    element identity with wet/dry + index/version tokens removed and word tokens
+    sorted. Needed because element_key keys EVERY '_DRY' to 'dry' (last underscore
+    segment) — so 'Lead_Vox_DRY' and 'BGV_Vox_DRY' would collide. This pairs
+    'Lead_Vox_DRY' across versions while keeping Lead vs BGV distinct."""
+    name = re.sub(r"(?i)\b(wet|dry)\b", " ", Path(path).stem)
+    name = re.sub(r"^\s*\d{1,3}[_\-\s.]+", "", name)   # leading export index
+    name = re.sub(r"[_\-\s.]+\d{1,2}$", "", name)      # trailing export index
+    name = _VERSION_TOKEN_RE.sub(" ", name)            # version tokens
+    toks = sorted(t for t in re.split(r"[_\-\s.]+", name.lower()) if t)
+    return " ".join(toks)
+
+
 def _audio_in(folder):
     return [f for f in sorted(Path(folder).iterdir())
             if f.is_file() and f.suffix.lower() in AUDIO_EXT]
