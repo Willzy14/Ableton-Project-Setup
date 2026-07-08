@@ -58,7 +58,7 @@ returns "Access denied" in Explorer. *(MiniMax H6.)*
 (the recent ML-leak fix was a different dir). AIFF/MP3/FLAC refs are common → steady temp growth.
 *(MiniMax H3.)* **Fix:** `try/finally` cleanup; same for the multi-version `_wav_staging` at :1444.
 
-**A7 · Zip ingest uses `extractall` (zip-slip) and can mis-read a single-`REF/` pack.** (Codex #3 + MiniMax H5)
+**A7 · ✅ DONE (2026-07-06) · Zip ingest uses `extractall` (zip-slip) and can mis-read a single-`REF/` pack.** (Codex #3 + MiniMax H5)
 `prepare_stem_folder` ([engine_api.py:265](../Studio%20App/engine_api.py)) extracts untrusted zip paths
 directly; a pack whose audio lives only inside `REF/` gets diverted to A/B refs → build with 0 working tracks.
 **Fix:** per-entry extract with a path-traversal guard; refuse/flag a pack whose only audio is under a special folder.
@@ -73,7 +73,7 @@ Bus-detect, dry-park (missing in multi!), preseeded-ref, refcompare, report, ico
 skips the other (has happened before). **Fix:** extract a shared `_finalize(pv, ...)`; single-version wraps
 its set as a one-element `pv`.
 
-**M2 · Session-report IO failure hides the whole result card.** (Codex #4 + MiniMax M5)
+**M2 · ✅ DONE (2026-07-06, lighter fix) · Session-report IO failure hides the whole result card.** (Codex #4 + MiniMax M5)
 The report is written then re-read; a Dropbox lock on `Reports/Session Report.json` → the build validates
 but the UI shows editable controls / no flags. **Fix:** `build_project` returns the report object; the
 worker passes it even if file IO fails; UI shows an explicit "report missing" state.
@@ -95,11 +95,11 @@ A large Pro Tools/Cubase export is skipped as "Not a WAV", or a sentinel `data_s
 giant read → OOM. Region/bounce numpy paths also read the whole file into RAM. **Fix:** cap `data_size` at
 file-size−offset; optional `soundfile` fallback for RF64; stream regions above a size threshold.
 
-**M6 · Timeout misreported as a crash.** (Codex #8)
+**M6 · ✅ DONE (2026-07-06) · Timeout misreported as a crash.** (Codex #8)
 A build killed by the 30-min watchdog can surface as "the engine crashed". **Fix:** a `timed_out` flag set in
 the timer, reported regardless of captured output.
 
-**M7 · Self-updater trusts `latest.json` + download URL with no hash/signature.** (Codex #7)
+**M7 · ✅ DONE (2026-07-06) · Self-updater trusts `latest.json` + download URL with no hash/signature.** (Codex #7)
 Compromised hosting → a swapped EXE is downloaded and run. **Fix:** add `sha256` to the feed, verify before
 swap; pin host/scheme.
 
