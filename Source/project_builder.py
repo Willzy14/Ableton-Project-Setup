@@ -1660,7 +1660,11 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     mv_skipped = []
     mv_peak = None
     for p in pv:
-        bounce_name = project_name + " " + p["vname"] + " FLAT REF.wav"
+        # Short filename ON PURPOSE: the bounce lives in Audio/<version>/, so
+        # repeating project_name + the (often long) producer version-folder name
+        # in the filename pushed the path past Windows' 260-char MAX_PATH — Ableton
+        # then showed the flat-ref sample OFFLINE. The clip keeps a readable label.
+        bounce_name = "FLAT REF.wav"
         bounce_path = p["vdir"] / bounce_name
         if p["mix"]:
             summary = sum_stems_to_wav([s["file_path"] for s in p["mix"]], bounce_path)
@@ -1767,7 +1771,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
 
     # FLAT REF: one track, a bounce clip per version at each version's offset
     if primary.get("bounce_path"):
-        flat = {"name": "FLAT REF", "clip_name": primary["bounce_path"].stem,
+        flat = {"name": "FLAT REF", "clip_name": _version_label(0) + " FLAT REF",
                 "category": "reference", "color": REF_TRACK_COLOR,
                 "file_path": primary["bounce_path"], "rel_path": primary["bounce_rel"],
                 "regions": None, "base_start_beat": offsets[0], "extra_clips": []}
@@ -1776,7 +1780,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                 flat["extra_clips"].append({
                     "file_path": pv[k]["bounce_path"], "rel_path": pv[k]["bounce_rel"],
                     "regions": None, "start_beat": offsets[k],
-                    "clip_name": pv[k]["bounce_path"].stem})
+                    "clip_name": _version_label(k) + " FLAT REF"})
         all_stems.append(flat)
 
     # Supplied refs and group buses are SHARED across versions by element too

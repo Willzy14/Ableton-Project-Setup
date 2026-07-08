@@ -112,6 +112,13 @@ def test_nametoken_multiversion_subgroups_and_preseeded_ref():
     assert any("V4" in n and "Master" in n for n in refs), \
         "pre-seeded master not wired as red ref; refs=" + str(refs)
 
+    # MAX_PATH guard: per-version flat-ref files must be short ("FLAT REF.wav"),
+    # not project_name + long producer version-name doubled — that pushed the path
+    # past Windows' 260-char limit and Ableton showed the sample OFFLINE.
+    assert list(Path(proj).rglob("FLAT REF.wav")), "no short-named FLAT REF.wav"
+    assert not list(Path(proj).rglob("*STEMS FLAT REF.wav")), \
+        "long doubled flat-ref filename still used (MAX_PATH regression)"
+
 
 if __name__ == "__main__":
     import traceback
