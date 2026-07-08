@@ -181,6 +181,8 @@ FX_STRONG_PATTERNS = [
     r"\bdownlift(er)?\b",
     r"\bwhoosh",
     r"\bswoosh",
+    r"\bfx.?fills?\b",      # "FX Fills"/"FX_Fills" — a transition FX fill, not a drum fill
+    r"\bfills?.?fx\b",      # "Fills FX"/"Fills_FX" (some producers reverse the word order)
 ]
 
 SEND_PATTERNS = [

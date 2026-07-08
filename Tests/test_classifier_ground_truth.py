@@ -49,6 +49,11 @@ GROUND_TRUTH = {
     "Vox Lead Delay Throw.wav": "vocals",
     "Delay Throw.wav": "vocals",          # bare throw reads as vocals
     "Main Hook Delay Throws.wav": "vocals",
+    # an FX fill is a transition FX, not a drum fill (Sam, HARTY project) — and it
+    # must classify the same whichever way the producer orders the words.
+    "FX_FILLS.wav": "fx",
+    "FILLS_FX.wav": "fx",
+    "FX Fills.wav": "fx",
 }
 
 # These must stay put — the additions above must not steal them.
@@ -64,6 +69,9 @@ GUARDS = {
     "Chorus.wav": "sends",
     "Reverb Snare.wav": "drums",          # instrument beats the send word
     "Snare Throw.wav": "drums",           # throw-guard yields to a real instrument
+    "Drum Fill.wav": "drums",             # a real drum fill stays drums (only FX fills -> fx)
+    "Snare Fills.wav": "drums",
+    "Tom Fill.wav": "drums",
 }
 
 
