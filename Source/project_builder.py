@@ -1005,6 +1005,25 @@ def _win_set_attrs(path, value, add=None):
     k.SetFileAttributesW(str(path), value)
 
 
+def _make_project_context(artist, title, label, output_base, project_name=None):
+    """Shared HEAD of both build paths: resolve the project name + folders, create
+    the subfolders, and capture any pre-seeded audio BEFORE stems are copied in
+    (a master the user dropped into the target folder to A/B against is wired in
+    as a red reference, not orphaned). Both middles consume the returned dict.
+    Pure extraction — no behaviour change (capture-preseeded-before-mkdir preserved).
+    """
+    if project_name is None:
+        project_name = artist + " - " + title + " [" + label + "]"
+    project_name = _safe_filename(project_name)          # can't blow up the folder/.als
+    project_folder = Path(output_base) / (project_name + " Project")
+    audio_folder = project_folder / "Audio"
+    preseeded = _find_preseeded_audio(project_folder, audio_folder)
+    for sub in ("Audio", "Ableton Project Info", "MASTER RENDERS"):
+        (project_folder / sub).mkdir(parents=True, exist_ok=True)
+    return {"project_name": project_name, "project_folder": project_folder,
+            "audio_folder": audio_folder, "preseeded": preseeded}
+
+
 def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                   use_ml=None, project_name=None, category_colors=None,
                   subgroup_categories=None):
@@ -1063,24 +1082,11 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             leftover_files=mv_leftovers, project_name=project_name,
         )
 
-    if project_name is None:
-        project_name = artist + " - " + title + " [" + label + "]"
-    project_name = _safe_filename(project_name)   # can't blow up the folder/.als
-    project_folder = output_base / (project_name + " Project")
-    audio_folder = project_folder / "Audio"
-    info_folder = project_folder / "Ableton Project Info"
-    master_folder = project_folder / "MASTER RENDERS"
-
-    # Capture anything the user pre-seeded into the target folder BEFORE we copy
-    # source stems in, so a supplied master (dropped in to A/B against) is wired
-    # in as a red reference rather than left orphaned. Filtered against the
-    # source stems below so our own copies/bounce aren't re-added.
-    preseeded = _find_preseeded_audio(project_folder, audio_folder)
-
-    project_folder.mkdir(parents=True, exist_ok=True)
-    audio_folder.mkdir(exist_ok=True)
-    info_folder.mkdir(exist_ok=True)
-    master_folder.mkdir(exist_ok=True)
+    ctx = _make_project_context(artist, title, label, output_base, project_name)
+    project_name = ctx["project_name"]
+    project_folder = ctx["project_folder"]
+    audio_folder = ctx["audio_folder"]
+    preseeded = ctx["preseeded"]
 
     print("Classifying stems...")
     classified, references, unclassified = classify_stems(stem_folder)
@@ -1593,22 +1599,17 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     with a flat-ref bounce under each version. 'updated stems' / 'ref' subfolders
     (updated_files / refcompare_files) are wired in like the single-version path.
     """
-    if project_name is None:
-        project_name = artist + " - " + title + " [" + label + "]"
-    project_name = _safe_filename(project_name)   # can't blow up the folder/.als
-    project_folder = Path(output_base) / (project_name + " Project")
-    audio_folder = project_folder / "Audio"
+    ctx = _make_project_context(artist, title, label, output_base, project_name)
+    project_name = ctx["project_name"]
+    project_folder = ctx["project_folder"]
+    audio_folder = ctx["audio_folder"]
+    preseeded = ctx["preseeded"]
     updated_files = list(updated_files or [])
     refcompare_files = list(refcompare_files or [])
     leftover_files = list(leftover_files or [])
-    # Capture any pre-seeded master/reference in the target folder BEFORE copying
-    # source stems in (same as the single-version path), so it's wired in below.
-    preseeded = _find_preseeded_audio(project_folder, audio_folder)
     source_names = {Path(f).stem.lower() for v in versions for f in v["files"]}
     source_names |= {Path(f).stem.lower()
                      for f in updated_files + refcompare_files + leftover_files}
-    for sub in ("Audio", "Ableton Project Info", "MASTER RENDERS"):
-        (project_folder / sub).mkdir(parents=True, exist_ok=True)
     mv_pre_skipped = []
     updated_files, _sk = _ensure_wav_paths(updated_files, audio_folder / "_wav_staging")
     mv_pre_skipped += _skip_labels(_sk)
