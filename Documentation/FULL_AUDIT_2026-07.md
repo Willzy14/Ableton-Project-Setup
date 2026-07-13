@@ -37,14 +37,19 @@ ungrouped tracks. *(MiniMax H1, Claude.)*
 **Fix:** strip a trailing export index from both sides before keying; add pairing tests (`Kick_01`↔`Kick`,
 `Drum_Top_Extended`↔`Drum_Top`).
 
-**A4 · ⏳ DEFERRED (needs careful design) · Deep nesting is classified only one subfolder down.** (Codex #2 — verify)
-> A naive "claimed vs found" recursive diff false-flags on every pack with refs / buses / version
-> subfolders / dupes, so this needs a proper coverage model (correct exclude set + expected-placed
-> count) — its own focused session, not a rushed change. Uncommon in Sam's real packs.
-`classify_stems` + the Studio App multi-input path resolve one wrapper level; `Stems/Drums/WAV/Kick.wav`
-can build without the deep stems and without a flag.
-**Fix:** one canonical recursive manifest (`rglob` with `__MACOSX`/dotfile/special-dir excludes), then
-diff "all source audio" vs "claimed" and flag the gap.
+**A4 · ✅ DONE (2026-07-13, Codex-plan-reviewed) · Deep nesting was classified only one subfolder down.** ✓ verified (harness byte-identical + 9 tests)
+Turned out WORSE than "one level down": `classify_stems` AND `detect_versions` both scanned one level,
+so a format-wrapper pack (`Drums/24bit WAV/Kick.wav`, or `Extended/WAV/…` + `Radio/WAV/…`) built a
+**completely empty project, silently**; partial nesting dropped the deep stems. **Fix (see
+[A4_DEEP_NESTING_PLAN.md](A4_DEEP_NESTING_PLAN.md)):** `versions._audio_under` (recursive, excludes
+`__MACOSX`/dotfile/output folders + special ref/update branches) vs `_audio_here` (shallow top-stem
+test); `classify_stems` a sorted depth-first walk (one-level order byte-identical); `_extract_special_dirs`
+ancestor-aware; a single-path coverage backstop (independent manifest → park+flag) + a hard guard
+(audio but zero working stems → loud error, never a silent empty build); collision-safe copies
+(`_copy_stem_dest`). Proven no-regression by `m1_refactor_harness` (Admonic+Fallon byte-identical) + new
+`Tests/test_deep_nesting.py` 9/9. *Follow-up (low priority): `special_dir_kind`'s `^ref…`/`new stems?`
+regex could false-divert a nested folder literally named "Ref Synths"/"New Stems" — pre-existing at one
+level, now reaches any depth; tighten if it ever bites.*
 
 **A5 · ~~The project folder is set permanently read-only by the icon step.~~ RESOLVED — not a real issue (Sam, 2026-07-06):** he has never hit "access denied" dropping files into a built project folder. A Windows *folder* read-only attribute is a customisation signal (for `Desktop.ini`), not a write-block on the folder's contents. Left as-is. ✓ verified (code) — premise wrong.
 [project_builder.py:923](../Source/project_builder.py) sets the folder READONLY. That blocks Sam's own

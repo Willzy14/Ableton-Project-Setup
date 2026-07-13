@@ -43,6 +43,18 @@ def special_dir_kind(dirname):
         return "ref"
     return None
 
+
+# Folders a recursive stem scan must never descend into: macOS junk, dotfiles,
+# and the tool's OWN output folders — so a rebuilt project, or a whole built
+# project dropped in as input, isn't re-ingested as if the outputs were stems.
+_OUTPUT_DIRS = {"reports", "ableton project info", "master renders", "backup"}
+
+
+def is_skip_dir(dirname):
+    """True for a subfolder recursion should skip entirely (not the stems)."""
+    name = str(dirname)
+    return name == "__MACOSX" or name.startswith(".") or name.lower() in _OUTPUT_DIRS
+
 # Tokens that mark an alternate VERSION rather than a different element — a
 # session/version code (Sam's "S16"/"S17"), or an arrangement keyword. Stripping
 # these lets the same element pair across versions (kick-on-kick), and is what
@@ -100,9 +112,30 @@ def dry_pair_key(path):
     return " ".join(toks)
 
 
-def _audio_in(folder):
+def _audio_here(folder):
+    """Direct audio children only — the top-level-stem test must stay shallow so
+    a nested pack doesn't fold its whole tree into the baseline."""
     return [f for f in sorted(Path(folder).iterdir())
             if f.is_file() and f.suffix.lower() in AUDIO_EXT]
+
+
+def _audio_under(folder):
+    """All audio anywhere under `folder`, depth-first in sorted order — sees
+    through a format wrapper (Extended/WAV/… , Drums/24bit WAV/…). Skips
+    __MACOSX/dotfile/output folders AND special (ref/update) branches: a REF/ or
+    'updated stems/' nested inside a version is gathered separately by
+    project_builder, so it must not count as a version member (else it both
+    inflates the mirror overlap and gets double-wired). One level of nesting is
+    byte-identical to the old _audio_in."""
+    out = []
+    for entry in sorted(Path(folder).iterdir()):
+        if entry.is_file():
+            if entry.suffix.lower() in AUDIO_EXT:
+                out.append(entry)
+        elif entry.is_dir() and not is_skip_dir(entry.name) \
+                and not special_dir_kind(entry.name):
+            out.extend(_audio_under(entry))
+    return out
 
 
 def _pick_base(subdirs):
@@ -120,7 +153,7 @@ def _pick_base(subdirs):
             kw = 0
         else:
             kw = 1
-        return (kw, len(_audio_in(d)))
+        return (kw, len(_audio_under(d)))
     return max(subdirs, key=score)
 
 
@@ -134,13 +167,13 @@ def _detect_subfolder_versions(subdirs, mirror_threshold):
     if len(subdirs) < 2:
         return None
     base = _pick_base(subdirs)
-    base_elems = {element_key(f) for f in _audio_in(base)}
+    base_elems = {element_key(f) for f in _audio_under(base)}
     versions = []
     primary_extra = []
     for d in subdirs:
         if d == base:
             continue
-        files = _audio_in(d)
+        files = _audio_under(d)
         elems = {element_key(f) for f in files}
         overlap = len(base_elems & elems) / len(elems) if elems else 0
         if overlap >= mirror_threshold:
@@ -149,7 +182,7 @@ def _detect_subfolder_versions(subdirs, mirror_threshold):
             primary_extra.extend(files)  # category subfolder -> flatten in
     if not versions:
         return None
-    return [{"name": base.name, "files": _audio_in(base) + primary_extra}] + versions
+    return [{"name": base.name, "files": _audio_under(base) + primary_extra}] + versions
 
 
 def _strip_export_index(stem):
@@ -224,13 +257,15 @@ def detect_versions(stem_folder, mirror_threshold=0.5):
     subfolder.
     """
     folder = Path(stem_folder)
-    top = _audio_in(folder)
+    top = _audio_here(folder)
+    # A subdir counts when it holds audio anywhere below it (so a version behind a
+    # format wrapper — Extended/WAV/… — is seen). 'updated stems' / 'ref' folders
+    # are NOT versions (project_builder handles them), and __MACOSX / dotfile /
+    # tool-output folders are skipped, so a small folder of revised stems (or a
+    # rebuilt project's own outputs) is never mis-read as a second version.
     subdirs = [d for d in sorted(folder.iterdir())
-               if d.is_dir() and _audio_in(d)]
-    # 'updated stems' / 'ref' subfolders are NOT versions — drop them from
-    # version detection (project_builder handles them). This stops a small
-    # folder of revised stems being mis-read as a second project.
-    subdirs = [d for d in subdirs if not special_dir_kind(d.name)]
+               if d.is_dir() and not is_skip_dir(d.name)
+               and not special_dir_kind(d.name) and _audio_under(d)]
 
     # A lone reference/master at the top (e.g. "…(Extended Ref).wav") is NOT a
     # stem baseline — ignore it for version detection so a pack that is really
@@ -253,7 +288,7 @@ def detect_versions(stem_folder, mirror_threshold=0.5):
     versions = []
     primary_extra = []
     for d in subdirs:
-        files = _audio_in(d)
+        files = _audio_under(d)
         elems = {element_key(f) for f in files}
         overlap = len(base_elems & elems) / len(elems)
         if overlap >= mirror_threshold:

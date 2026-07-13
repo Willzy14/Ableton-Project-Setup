@@ -18,7 +18,7 @@
     },
     "Source/stem_classifier.py": {
       "purpose": "Filename-based classification and display track-name generation.",
-      "notes": "Patterns cover drums, bass, music, vocals, FX, sends, references, and common messy export names. Since 2026-07-02: FX_STRONG_PATTERNS (downer/sub-drop/riser/uplifter) outranks bass/music so transition FX don't get grabbed by instrument words; hook/topline are guarded weak vocal signals (stripped, then checked against remaining instrument/drum/FX words) so 'Hook Main' -> vocals but 'Synth Hook'/'Guitar Topline' stay music."
+      "notes": "Patterns cover drums, bass, music, vocals, FX, sends, references, and common messy export names. classify_stems() walks the folder DEPTH-FIRST to any depth (2026-07-13, A4) so a format-wrapper pack (Drums/24bit WAV/Kick.wav) no longer builds empty; one-level order is byte-identical to the old scan; skips __MACOSX/dotfile/output folders via versions.is_skip_dir. Since 2026-07-02: FX_STRONG_PATTERNS (downer/sub-drop/riser/uplifter) outranks bass/music so transition FX don't get grabbed by instrument words; hook/topline are guarded weak vocal signals (stripped, then checked against remaining instrument/drum/FX words) so 'Hook Main' -> vocals but 'Synth Hook'/'Guitar Topline' stay music."
     },
     "Source/audio_ml_classify.py": {
       "purpose": "Heavy audio-content classifier for unnamed stems using Demucs source bins and optional Whisper vocal confirmation.",
@@ -46,7 +46,7 @@
     },
     "Source/versions.py": {
       "purpose": "Detects alternate-version subfolders/name-tokens by mirrored element keys; pairs elements across versions.",
-      "notes": "element_key() strips a trailing export index before pairing (2026-07-06). sorted_element_key() is an order-independent fallback (consulted only when element_key misses) that pairs a reversed-word-order element like FX_FILLS/FILLS_FX across versions. dry_pair_key() is a wet/dry-stripped order-independent key for pairing dry vocal parks across versions (element_key alone collides every _DRY stem to 'dry')."
+      "notes": "Scans are nest-aware (2026-07-13, A4): _audio_here() = direct children only (the shallow top-level-stem test), _audio_under() = recursive (sees a version behind a format wrapper Extended/WAV/...) but excludes __MACOSX/dotfile/output folders AND special ref/update branches (a nested REF/ is gathered by project_builder, not counted as a version member). is_skip_dir() is the shared skip predicate (macOS junk, dotfiles, tool output folders Reports/Ableton Project Info/MASTER RENDERS/Backup). element_key() strips a trailing export index before pairing (2026-07-06). sorted_element_key() is an order-independent fallback (consulted only when element_key misses) that pairs a reversed-word-order element like FX_FILLS/FILLS_FX across versions. dry_pair_key() is a wet/dry-stripped order-independent key for pairing dry vocal parks across versions (element_key alone collides every _DRY stem to 'dry')."
     },
     "Source/validate_project.py": {
       "purpose": "Canonical generated-project validator for ALS gzip/XML readability, tempo, tempo automation, Session Time, refs, FLAT REF, and file refs.",
@@ -293,6 +293,28 @@
         "Run one normal Studio App or CLI build with auto-BPM and a real stem pack, then open it in Ableton to eyeball the grid.",
         "Keep legacy energy onset fallback in place; if Kick Detector readout defaults change, update bpm_detector.py and config together.",
         "Deep-nesting classification (audit A4) and RF64 >4GB support remain deliberately deferred."
+      ]
+    },
+    {
+      "date": "2026-07-13",
+      "summary": "A4 deep-nesting/format-wrapper support (audit A4, previously deferred). Proved on synthetic packs that classify_stems AND detect_versions both scanned only ONE subfolder level, so a pack nesting stems under a format wrapper (Drums/24bit WAV/Kick.wav, or Extended/WAV/... + Radio/WAV/...) built a COMPLETELY EMPTY project with no flag, and partial nesting silently dropped the deep stems. Fix (Codex plan-reviewed -> SOUND WITH CHANGES, all 3 findings folded in): (A1) versions.py splits the old one-level _audio_in into _audio_here (shallow, the top-level-stem test) + _audio_under (recursive, excludes __MACOSX/dotfile/output folders AND special ref/update branches so a nested REF/ isn't a false version member); (A2) classify_stems is now a sorted depth-first walk whose one-level order is byte-identical to the old scan; (A3) _extract_special_dirs is ancestor-aware; (Part B) a single-path coverage backstop (independent recursive manifest vs claimed -> any leftover parked as a reference + flagged) + a hard guard (audio present but zero working stems -> loud ValueError, never a silent empty build); plus collision-safe copies (_copy_stem_dest) so two deep stems sharing a basename don't overwrite each other. Shared helpers versions.is_skip_dir + project_builder._all_source_audio. Validated: m1_refactor_harness compare -> Admonic(single)+Fallon(multi) rebuild byte-identical .als XML + report (no regression); new Tests/test_deep_nesting.py 9/9 (incl. an e2e format-wrapper build that validate_project PASSes, the hard guard, collision-safe copy); full suite 26/26. Committed as its own commit, separate from the pre-existing (uncommitted) Kick Detector work which was committed first.",
+      "files_changed": [
+        "Source/versions.py",
+        "Source/stem_classifier.py",
+        "Source/project_builder.py",
+        "Tests/test_deep_nesting.py (new)",
+        "Documentation/A4_DEEP_NESTING_PLAN.md (new)",
+        "Documentation/FULL_AUDIT_2026-07.md",
+        "Documentation/AI_CONTEXT.md",
+        "Documentation/TOOLBOX.md",
+        ".gitignore",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Optionally run the format-wrapper path on a REAL deeply-nested pack from Sam and open in Ableton.",
+        "Low-priority follow-up: special_dir_kind's ^ref.../new stems? regex could false-divert a nested folder literally named 'Ref Synths'/'New Stems' (now reaches any depth) - tighten if it ever bites.",
+        "RF64/WAVE64 (>4GB WAV) support remains deliberately deferred."
       ]
     }
   ],

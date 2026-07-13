@@ -355,6 +355,7 @@ def classify_stems(stem_folder):
         references: list of Path for reference/full mix files
         unclassified: list of Path for files that couldn't be classified
     """
+    from versions import is_skip_dir
     stem_folder = Path(stem_folder)
 
     def _is_stem(f):
@@ -363,11 +364,21 @@ def classify_stems(stem_folder):
         return (f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
                 and not f.name.startswith("."))
 
-    all_files = [f for f in sorted(stem_folder.iterdir()) if _is_stem(f)]
+    # Depth-first walk to ANY depth: top files sorted, then recurse each sorted
+    # subdir. For a one-level pack this reproduces the old order exactly (top
+    # files, then each subfolder's files); it also stops a format-wrapper pack
+    # (Drums/24bit WAV/Kick.wav) or a partially-nested pack silently dropping its
+    # deep stems. Skips __MACOSX/dotfile/output folders; a 'ref'/'updated stems'
+    # subfolder IS scanned (its files are diverted later by _extract_special_dirs).
+    def _collect(folder):
+        entries = sorted(folder.iterdir())
+        found = [f for f in entries if _is_stem(f)]
+        for d in entries:
+            if d.is_dir() and not is_skip_dir(d.name):
+                found.extend(_collect(d))
+        return found
 
-    for sub in sorted(stem_folder.iterdir()):
-        if sub.is_dir() and sub.name != "__MACOSX" and not sub.name.startswith("."):
-            all_files.extend(f for f in sorted(sub.iterdir()) if _is_stem(f))
+    all_files = _collect(stem_folder)
 
     classified = {cat: [] for cat in CATEGORIES}
     references = []

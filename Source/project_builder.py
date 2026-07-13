@@ -21,7 +21,9 @@ from stem_classifier import (classify_stems, classify_stem, apply_track_names,
                              find_dry_stems, CATEGORIES, AUDIO_EXTENSIONS)
 from als_patcher import (patch_project, find_audio_regions, CLIP_START_BEATS,
                          SILENCE_FLOOR_DB, get_wav_info)
-from bpm_detector import detect_bpm
+from bpm_detector import (detect_bpm, configure_kick_detector,
+                          default_kick_detector_model_path,
+                          default_kick_detector_source_dir)
 from bounce import sum_stems_to_wav
 from stem_analysis import audio_label, find_group_buses, analysis_available
 from versions import detect_versions, element_key, sorted_element_key, dry_pair_key
@@ -167,6 +169,70 @@ def get_enable_ml_classifier():
     if env_value is not None:
         return env_value.strip().lower() not in {"0", "false", "no", "off"}
     return bool(_load_project_config().get("enable_ml_classifier", True))
+
+
+def _config_bool(env_name, config_key, default=False):
+    env_value = os.environ.get(env_name)
+    if env_value is not None:
+        return env_value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(_load_project_config().get(config_key, default))
+
+
+def get_enable_kick_detector():
+    return _config_bool("ENABLE_KICK_DETECTOR", "enable_kick_detector", False)
+
+
+def get_kick_detector_model_path():
+    return _configured_path("KICK_DETECTOR_MODEL_PATH", "kick_detector_model_path",
+                            default_kick_detector_model_path())
+
+
+def get_kick_detector_source_dir():
+    return _configured_path("KICK_DETECTOR_SOURCE_DIR", "kick_detector_source_dir",
+                            default_kick_detector_source_dir())
+
+
+def get_kick_detector_threshold():
+    env_value = os.environ.get("KICK_DETECTOR_THRESHOLD")
+    if env_value:
+        try:
+            return float(env_value)
+        except ValueError:
+            pass
+    return float(_load_project_config().get("kick_detector_threshold", 0.30))
+
+
+def get_kick_detector_device():
+    return os.environ.get("KICK_DETECTOR_DEVICE") or _load_project_config().get(
+        "kick_detector_device", "cpu")
+
+
+def get_kick_detector_python_exe():
+    return (os.environ.get("KICK_DETECTOR_PYTHON_EXE")
+            or _load_project_config().get("kick_detector_python_exe")
+            or None)
+
+
+def get_kick_detector_timeout_sec():
+    env_value = os.environ.get("KICK_DETECTOR_TIMEOUT_SEC")
+    if env_value:
+        try:
+            return max(1.0, float(env_value))
+        except ValueError:
+            pass
+    return float(_load_project_config().get("kick_detector_timeout_sec", 120))
+
+
+def _configure_kick_detector_from_config():
+    configure_kick_detector(
+        enabled=get_enable_kick_detector(),
+        model_path=get_kick_detector_model_path(),
+        source_dir=get_kick_detector_source_dir(),
+        threshold=get_kick_detector_threshold(),
+        device=get_kick_detector_device(),
+        python_exe=get_kick_detector_python_exe(),
+        timeout_sec=get_kick_detector_timeout_sec(),
+    )
 
 
 def get_ml_timeout_sec(n_stems):
@@ -412,6 +478,10 @@ def _audio_quality_flags(bpm, result, credible):
         flags.append("Auto-BPM " + str(b) + " is outside the usual range — "
                      "check it isn't half/double-time (try " + str(b // 2)
                      + " or " + str(b * 2) + ").")
+    if result and result.get("detector_error"):
+        flags.append("Kick Detector V3 could not run for BPM detection, so the "
+                     "legacy energy detector was used instead: "
+                     + str(result.get("detector_error")))
     return flags
 
 
@@ -427,7 +497,9 @@ def _resolve_project_bpm(classified, fn_bpm):
 
     def _audio_meta():
         return {"source": src.name, "residual_ms": result["residual_ms"],
-                "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
+                "inliers": result["n_inliers"], "onsets": result["n_onsets"],
+                "detector": result.get("detector"),
+                "detector_error": result.get("detector_error")}
 
     # No filename hint — the audio decides (unchanged behaviour).
     if fn_bpm is None:
@@ -441,7 +513,8 @@ def _resolve_project_bpm(classified, fn_bpm):
         # Nothing locked cleanly to confirm the label. Keep it, but say so —
         # never silently trust a filename for something this integral.
         meta = {"source": "filename (unverified)", "residual_ms": None,
-                "inliers": None, "onsets": None}
+                "inliers": None, "onsets": None, "detector": None,
+                "detector_error": None}
         flag = ("BPM " + _fmt_bpm(fn_bpm) + " came from the filename and could not be "
                 "confirmed against the audio (no clean rhythmic stem to grid-check it) "
                 "— verify the tempo.")
@@ -452,7 +525,9 @@ def _resolve_project_bpm(classified, fn_bpm):
         # The audio confirms the label.
         meta = {"source": "filename (audio-confirmed)",
                 "residual_ms": result["residual_ms"],
-                "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
+                "inliers": result["n_inliers"], "onsets": result["n_onsets"],
+                "detector": result.get("detector"),
+                "detector_error": result.get("detector_error")}
         return float(fn_bpm), meta, []
 
     # Conflict: the audio grid-locks to a different tempo than the label says.
@@ -462,7 +537,9 @@ def _resolve_project_bpm(classified, fn_bpm):
     audio_bpm = float(round(aligned))
     meta = {"source": "audio (overrode filename " + _fmt_bpm(fn_bpm) + ")",
             "residual_ms": result["residual_ms"],
-            "inliers": result["n_inliers"], "onsets": result["n_onsets"]}
+            "inliers": result["n_inliers"], "onsets": result["n_onsets"],
+            "detector": result.get("detector"),
+            "detector_error": result.get("detector_error")}
     flag = ("Filename said " + _fmt_bpm(fn_bpm) + " BPM but the audio grid-locks to "
             + _fmt_bpm(audio_bpm) + " — using " + _fmt_bpm(audio_bpm) + " (from "
             + src.name + "). Verify the tempo.")
@@ -866,11 +943,22 @@ def _extract_special_dirs(classified, references, unclassified, root):
     root = Path(root).absolute()
     updated, ref_compare = [], []
 
+    def _special_kind(f):
+        # Nearest special ANCESTOR up to (not incl.) root wins — a REF/ or
+        # 'updated stems/' folder can now sit at any depth (classify_stems
+        # recurses), not just as the file's immediate parent.
+        for anc in Path(f).absolute().parents:
+            if anc == root:
+                break
+            kind = special_dir_kind(anc.name)
+            if kind:
+                return kind
+        return None
+
     def sift(lst):
         keep = []
         for f in lst:
-            parent = Path(f).absolute().parent
-            kind = None if parent == root else special_dir_kind(parent.name)
+            kind = _special_kind(f)
             if kind == "update":
                 updated.append(f)
             elif kind == "ref":
@@ -929,6 +1017,45 @@ def _match_key(path):
     name = re.sub(r"[_\-]", " ", name)
     name = re.sub(r"\s+\d{1,2}$", "", name)               # trailing counter
     return re.sub(r"\s+", " ", name).strip().lower() or Path(path).stem.lower()
+
+
+def _copy_stem_dest(f, audio_dir, used):
+    """Collision-safe destination for copying stem `f` into `audio_dir`.
+
+    `used` maps {lower dest name -> source path} for THIS build. A second, DIFFERENT
+    source sharing a basename (common once subfolders are scanned to any depth —
+    'Drums/WAV/Loop.wav' vs 'Perc/WAV/Loop.wav') gets a disambiguated name so it
+    can't silently overwrite / re-reference the first file's copy. A repeat of the
+    SAME source (rebuild into an existing folder) keeps the plain name."""
+    key = f.name.lower()
+    prior = used.get(key)
+    if prior is None or Path(prior).absolute() == Path(f).absolute():
+        used[key] = f
+        return audio_dir / f.name
+    tag = _safe_filename(f.parent.name) or "alt"
+    for cand in [f"{f.stem} ({tag}){f.suffix}",
+                 *(f"{f.stem} ({i}){f.suffix}" for i in range(2, 1000))]:
+        if cand.lower() not in used:
+            used[cand.lower()] = f
+            return audio_dir / cand
+    used[key] = f
+    return audio_dir / f.name
+
+
+def _all_source_audio(folder):
+    """Every real source stem file anywhere under `folder`, depth-first sorted —
+    the canonical manifest for the 'nothing is silently dropped' coverage check.
+    Skips __MACOSX/dotfiles and the tool's own output folders (is_skip_dir);
+    ref/update branches ARE included (they're claimed as refs/updates, not lost)."""
+    from versions import is_skip_dir
+    out = []
+    for entry in sorted(Path(folder).iterdir()):
+        if entry.is_file():
+            if entry.suffix.lower() in AUDIO_EXTENSIONS and not entry.name.startswith("."):
+                out.append(entry)
+        elif entry.is_dir() and not is_skip_dir(entry.name):
+            out.extend(_all_source_audio(entry))
+    return out
 
 
 def _apply_subgroups(stems, scope):
@@ -1067,6 +1194,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     Returns:
         Path to the created project folder
     """
+    _configure_kick_detector_from_config()
     stem_folder = Path(stem_folder)
     if output_base is None:
         output_base = get_output_base()
@@ -1123,6 +1251,37 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                     for lst in (references, unclassified, updated_files,
                                 refcompare_files, *classified.values())
                     for p in lst}
+
+    # Coverage backstop — nothing is ever silently dropped. classify_stems now
+    # recurses to any depth, but build the manifest INDEPENDENTLY (a separate
+    # walk) so a future scan regression surfaces here instead of vanishing. Any
+    # source audio not claimed by classification/refs/updated is wired in as a
+    # parked reference + flagged — the single-path twin of the multi-version net.
+    _claimed = {Path(p).absolute()
+                for lst in (references, unclassified, updated_files,
+                            refcompare_files, *classified.values())
+                for p in lst}
+    manifest = _all_source_audio(stem_folder)
+    leftovers = [f for f in manifest if Path(f).absolute() not in _claimed]
+    coverage_flags = []
+    if leftovers:
+        print("\nCoverage: " + str(len(leftovers)) + " audio file(s) were not "
+              "placed by classification — wired in as parked references:")
+        for f in leftovers:
+            print("  " + f.name)
+        references = list(references) + leftovers
+        coverage_flags = [str(len(leftovers)) + " stem(s) were nested unexpectedly "
+                          "and parked as references — check the pack layout"]
+
+    # Hard guard: a pack with audio in it must yield at least one working stem.
+    # Post-recursion this only trips on a genuinely un-buildable input (only
+    # refs/masters, or a shape we didn't anticipate) — fail loudly, never emit a
+    # silent "successful" empty project.
+    if manifest and not (sum(len(v) for v in classified.values()) or unclassified):
+        raise ValueError(
+            "Found " + str(len(manifest)) + " audio file(s) but couldn't place "
+            "any as working stems — the pack may be nested in an unexpected way "
+            "or contain only reference/master files. Check the folder structure.")
 
     # Normalise non-WAV audio (AIFF/MP3/FLAC dropped in with the stems) to WAV
     # up front, so every downstream reader (regions, BPM, bounce, analysis) only
@@ -1215,10 +1374,11 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     print("\nCopying stems and detecting audio regions...")
     stems = []
+    used_dests = {}   # collision-safe copies once we recurse subfolders
     for cat in sorted(classified.keys(), key=lambda c: CATEGORIES[c]["order"]):
         color = cat_color(cat)
         for f in classified[cat]:
-            dest = audio_folder / f.name
+            dest = _copy_stem_dest(f, audio_folder, used_dests)
             if not dest.exists():
                 shutil.copy2(f, dest)
             # FX (risers/uplifters build from near-silence) get a lead-in so
@@ -1230,7 +1390,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                 "category": cat,
                 "color": color,
                 "file_path": dest,
-                "rel_path": "Audio/" + f.name,
+                "rel_path": "Audio/" + dest.name,
                 "regions": regions,
                 "silent": true_peak_db < SILENCE_FLOOR_DB,
             })
@@ -1491,6 +1651,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "bpm_residual_ms": bpm_meta["residual_ms"] if bpm_meta else None,
         "bpm_inliers": bpm_meta["inliers"] if bpm_meta else None,
         "bpm_onsets": bpm_meta["onsets"] if bpm_meta else None,
+        "bpm_detector": bpm_meta.get("detector") if bpm_meta else None,
+        "bpm_detector_error": bpm_meta.get("detector_error") if bpm_meta else None,
         "tracks_total": len(all_stems),
         "categories": {cat: cat_counts[cat]
                        for cat in sorted(cat_counts, key=lambda c: CATEGORIES[c]["order"])},
@@ -1506,7 +1668,8 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
         "skipped": list(summary.get("skipped", [])) + pre_skipped,
         "flags": _collect_flags(unmatched_updated,
                                 list(summary.get("skipped", [])) + pre_skipped,
-                                silent_tracks, bpm_flags) + analysis_flags + als_flags,
+                                silent_tracks, bpm_flags) + analysis_flags
+                                + coverage_flags + als_flags,
         "multiversion": False,
     }
     return _finish_project(project_folder, report, cleanup_dirs=[wav_staging])
@@ -1562,8 +1725,10 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
 
     version_audio_dir.mkdir(parents=True, exist_ok=True)
 
+    used_dests = {}   # collision-safe copies within this version's Audio folder
+
     def _copy(f):
-        dest = version_audio_dir / f.name
+        dest = _copy_stem_dest(f, version_audio_dir, used_dests)
         if not dest.exists():
             shutil.copy2(f, dest)
         return dest
@@ -1578,7 +1743,7 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
             mix_stems.append({
                 "element_key": element_key(f), "orig_name": f.stem,
                 "category": cat, "color": color, "file_path": dest,
-                "rel_path": rel_prefix + f.name, "regions": regions,
+                "rel_path": rel_prefix + dest.name, "regions": regions,
                 "silent": true_peak_db < SILENCE_FLOOR_DB,
             })
 
@@ -1599,7 +1764,7 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
     for f in references:
         dest = _copy(f)
         ref_stems.append({"element_key": element_key(f), "orig_name": f.stem,
-                          "file_path": dest, "rel_path": rel_prefix + f.name})
+                          "file_path": dest, "rel_path": rel_prefix + dest.name})
     return mix_stems, ref_stems, bus_stems, dry_stems, v_skipped
 
 
@@ -1615,6 +1780,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     with a flat-ref bounce under each version. 'updated stems' / 'ref' subfolders
     (updated_files / refcompare_files) are wired in like the single-version path.
     """
+    _configure_kick_detector_from_config()
     ctx = _make_project_context(artist, title, label, output_base, project_name)
     project_name = ctx["project_name"]
     project_folder = ctx["project_folder"]
@@ -1985,6 +2151,8 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         "bpm_residual_ms": bpm_meta["residual_ms"] if bpm_meta else None,
         "bpm_inliers": bpm_meta["inliers"] if bpm_meta else None,
         "bpm_onsets": bpm_meta["onsets"] if bpm_meta else None,
+        "bpm_detector": bpm_meta.get("detector") if bpm_meta else None,
+        "bpm_detector_error": bpm_meta.get("detector_error") if bpm_meta else None,
         "tracks_total": len(all_stems),
         "categories": {cat: cat_counts[cat]
                        for cat in sorted(cat_counts, key=lambda c: CATEGORIES[c]["order"])},
