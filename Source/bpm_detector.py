@@ -23,6 +23,10 @@ Usage:
     python bpm_detector.py "<kick stem>.wav" ["<another stem>.wav" ...]
 """
 import struct as _struct
+import importlib.util
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -34,6 +38,249 @@ MAX_SECONDS = 120.0      # cap analysis window — 2 min of kicks is plenty
 MIN_BPM = 90.0
 MAX_BPM = 180.0
 MIN_ONSETS = 8           # fewer than this → not enough to trust
+
+KICK_DETECTOR_THRESHOLD = 0.30
+KICK_DETECTOR_DEVICE = "cpu"
+
+_KICK_DETECTOR_CONFIG = {
+    "enabled": None,
+    "model_path": None,
+    "source_dir": None,
+    "threshold": KICK_DETECTOR_THRESHOLD,
+    "device": KICK_DETECTOR_DEVICE,
+    "python_exe": None,
+    "timeout_sec": 120,
+}
+_KICK_MODEL = None
+_KICK_MODEL_KEY = None
+_KICK_SUBPROCESS_CACHE = {}
+
+
+def default_kick_detector_source_dir():
+    """Sibling Kick Detector repo, when present in Sam's hub."""
+    return Path(__file__).resolve().parents[2] / "Kick Detector" / "Source"
+
+
+def default_kick_detector_model_path():
+    return Path(__file__).resolve().parents[2] / "Kick Detector" / "Models" / "kick_crnn_V3.pt"
+
+
+def configure_kick_detector(enabled=None, model_path=None, source_dir=None,
+                            threshold=None, device=None, python_exe=None,
+                            timeout_sec=None):
+    """Configure the optional CRNN onset provider used by detect_bpm().
+
+    If not configured, environment variables are used:
+    ENABLE_KICK_DETECTOR, KICK_DETECTOR_MODEL_PATH, KICK_DETECTOR_SOURCE_DIR,
+    KICK_DETECTOR_THRESHOLD, KICK_DETECTOR_DEVICE.
+    """
+    global _KICK_MODEL, _KICK_MODEL_KEY, _KICK_SUBPROCESS_CACHE
+    _KICK_DETECTOR_CONFIG["enabled"] = enabled
+    _KICK_DETECTOR_CONFIG["model_path"] = Path(model_path) if model_path else None
+    _KICK_DETECTOR_CONFIG["source_dir"] = Path(source_dir) if source_dir else None
+    if threshold is not None:
+        _KICK_DETECTOR_CONFIG["threshold"] = float(threshold)
+    if device:
+        _KICK_DETECTOR_CONFIG["device"] = str(device)
+    _KICK_DETECTOR_CONFIG["python_exe"] = python_exe or None
+    if timeout_sec is not None:
+        _KICK_DETECTOR_CONFIG["timeout_sec"] = float(timeout_sec)
+    _KICK_MODEL = None
+    _KICK_MODEL_KEY = None
+    _KICK_SUBPROCESS_CACHE = {}
+
+
+def _env_bool(name, default=False):
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _kick_detector_settings():
+    enabled = _KICK_DETECTOR_CONFIG["enabled"]
+    if enabled is None:
+        enabled = _env_bool("ENABLE_KICK_DETECTOR", False)
+    model_path = (_KICK_DETECTOR_CONFIG["model_path"]
+                  or (Path(os.environ["KICK_DETECTOR_MODEL_PATH"])
+                      if os.environ.get("KICK_DETECTOR_MODEL_PATH") else None)
+                  or default_kick_detector_model_path())
+    source_dir = (_KICK_DETECTOR_CONFIG["source_dir"]
+                  or (Path(os.environ["KICK_DETECTOR_SOURCE_DIR"])
+                      if os.environ.get("KICK_DETECTOR_SOURCE_DIR") else None)
+                  or default_kick_detector_source_dir())
+    threshold = float(os.environ.get(
+        "KICK_DETECTOR_THRESHOLD", _KICK_DETECTOR_CONFIG["threshold"]))
+    device = os.environ.get("KICK_DETECTOR_DEVICE", _KICK_DETECTOR_CONFIG["device"])
+    python_exe = os.environ.get("KICK_DETECTOR_PYTHON_EXE",
+                                _KICK_DETECTOR_CONFIG["python_exe"])
+    timeout = float(os.environ.get("KICK_DETECTOR_TIMEOUT_SEC",
+                                   _KICK_DETECTOR_CONFIG["timeout_sec"]))
+    return bool(enabled), Path(model_path), Path(source_dir), threshold, device, python_exe, timeout
+
+
+def _kick_model_name_allowed(wav_path):
+    if _env_bool("KICK_DETECTOR_ALL_CANDIDATES", False):
+        return True
+    name = Path(wav_path).stem.lower()
+    parts = name.replace("_", " ").replace("-", " ").replace(".", " ").split()
+    return ("kick" in name or "kik" in parts or "bd" in parts
+            or "bdrum" in parts or "kickgrp" in name)
+
+
+def _python_command(python_exe):
+    if not python_exe:
+        return None
+    p = str(python_exe).strip()
+    if not p:
+        return None
+    if Path(p).exists():
+        return [p]
+    return p.split()
+
+
+def _kick_model_onsets_subprocess(wav_path, model_path, source_dir, threshold,
+                                  device, python_exe, timeout):
+    cmd = _python_command(python_exe)
+    if not cmd:
+        return None
+    st = Path(wav_path).stat()
+    cache_key = (str(Path(wav_path).resolve()), st.st_mtime_ns, st.st_size,
+                 str(Path(model_path).resolve()), str(Path(source_dir).resolve()),
+                 float(threshold), str(device), str(python_exe))
+    if cache_key in _KICK_SUBPROCESS_CACHE:
+        return list(_KICK_SUBPROCESS_CACHE[cache_key])
+    script = (
+        "import contextlib, io, json, sys, warnings\n"
+        "from pathlib import Path\n"
+        "source_dir, model_path, wav_path, threshold, device = sys.argv[1:]\n"
+        "sys.path.insert(0, source_dir)\n"
+        "warnings.filterwarnings('ignore')\n"
+        "with contextlib.redirect_stdout(sys.stderr):\n"
+        "    import numpy as np\n"
+        "    import soundfile as sf\n"
+        "    from infer import KickModel\n"
+        "    audio, sr = sf.read(wav_path, always_2d=True, dtype='float32')\n"
+        "    audio = audio.mean(axis=1)\n"
+        "    audio = audio[:int(120 * sr)]\n"
+        "    model = KickModel(model_path, device=device)\n"
+        "    onsets = model.onsets(audio, sr, thresh=float(threshold))\n"
+        "print(json.dumps([float(x) for x in onsets]))\n"
+    )
+    proc = subprocess.run(
+        cmd + ["-c", script, str(source_dir), str(model_path), str(wav_path),
+               str(threshold), str(device)],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "Kick Detector subprocess failed").strip()
+        raise RuntimeError(err)
+    parsed = json.loads(proc.stdout.strip() or "[]")
+    _KICK_SUBPROCESS_CACHE[cache_key] = list(parsed)
+    return parsed
+
+
+def _load_kick_model(model_path, source_dir, device):
+    """Lazy-load Kick Detector without leaving a generic 'model' module behind."""
+    global _KICK_MODEL, _KICK_MODEL_KEY
+    key = (str(Path(model_path).resolve()), str(Path(source_dir).resolve()), device)
+    if _KICK_MODEL is not None and _KICK_MODEL_KEY == key:
+        return _KICK_MODEL
+    model_file = Path(source_dir) / "model.py"
+    infer_file = Path(source_dir) / "infer.py"
+    if not model_file.exists():
+        raise FileNotFoundError("Kick Detector model.py not found: " + str(model_file))
+    if not infer_file.exists():
+        raise FileNotFoundError("Kick Detector infer.py not found: " + str(infer_file))
+    if not Path(model_path).exists():
+        raise FileNotFoundError("Kick Detector weights not found: " + str(model_path))
+
+    model_spec = importlib.util.spec_from_file_location("_aps_kickdet_model", model_file)
+    model_mod = importlib.util.module_from_spec(model_spec)
+    old_model = sys.modules.get("model")
+    sys.modules["_aps_kickdet_model"] = model_mod
+    # infer.py currently says `from model import ...`; provide that name only
+    # during import, then restore whatever the host process had before.
+    sys.modules["model"] = model_mod
+    try:
+        model_spec.loader.exec_module(model_mod)
+        infer_spec = importlib.util.spec_from_file_location("_aps_kickdet_infer", infer_file)
+        infer_mod = importlib.util.module_from_spec(infer_spec)
+        sys.modules["_aps_kickdet_infer"] = infer_mod
+        infer_spec.loader.exec_module(infer_mod)
+    finally:
+        if old_model is None:
+            sys.modules.pop("model", None)
+        else:
+            sys.modules["model"] = old_model
+
+    _KICK_MODEL = infer_mod.KickModel(model_path, device=device)
+    _KICK_MODEL_KEY = key
+    return _KICK_MODEL
+
+
+def _read_wav_mono_np(wav_path, max_seconds=MAX_SECONDS):
+    """Read WAV audio to mono float32 for Kick Detector inference."""
+    import numpy as np
+    hdr = _read_wav_header(wav_path)
+    sr = hdr["rate"]
+    n_ch = hdr["channels"]
+    bps = hdr["bps"]
+    frame_bytes = n_ch * bps
+    if frame_bytes == 0 or sr == 0:
+        return np.zeros(0, dtype=np.float32), sr
+
+    n_frames = hdr["n_frames"]
+    if max_seconds:
+        n_frames = min(n_frames, int(max_seconds * sr))
+    with open(str(wav_path), "rb") as f:
+        f.seek(hdr["data_offset"])
+        data = f.read(n_frames * frame_bytes)
+
+    if not data:
+        return np.zeros(0, dtype=np.float32), sr
+
+    is_float = hdr["fmt"] == 3
+    if is_float and bps == 4:
+        arr = np.frombuffer(data, dtype="<f4").astype(np.float32, copy=False)
+    elif bps == 2:
+        arr = np.frombuffer(data, dtype="<i2").astype(np.float32) / float(2 ** 15)
+    elif bps == 3:
+        raw = np.frombuffer(data, dtype=np.uint8)
+        n = (len(raw) // 3) * 3
+        raw = raw[:n].reshape(-1, 3).astype(np.int32)
+        vals = raw[:, 0] | (raw[:, 1] << 8) | (raw[:, 2] << 16)
+        vals = np.where(vals >= 0x800000, vals - 0x1000000, vals)
+        arr = vals.astype(np.float32) / float(2 ** 23)
+    elif bps == 4:
+        arr = np.frombuffer(data, dtype="<i4").astype(np.float32) / float(2 ** 31)
+    else:
+        raise ValueError("Unsupported WAV bit depth for Kick Detector: " + str(bps * 8))
+
+    usable = (len(arr) // n_ch) * n_ch
+    arr = arr[:usable]
+    if n_ch > 1 and usable:
+        arr = arr.reshape(-1, n_ch).mean(axis=1)
+    return arr.astype(np.float32, copy=False), sr
+
+
+def _kick_model_onsets(wav_path):
+    enabled, model_path, source_dir, threshold, device, python_exe, timeout = _kick_detector_settings()
+    if not enabled:
+        return None
+    if not _kick_model_name_allowed(wav_path):
+        return None
+    sub = _kick_model_onsets_subprocess(
+        wav_path, model_path, source_dir, threshold, device, python_exe, timeout)
+    if sub is not None:
+        return [float(x) for x in sub]
+    audio, sr = _read_wav_mono_np(wav_path)
+    if len(audio) == 0:
+        return []
+    model = _load_kick_model(model_path, source_dir, device)
+    return [float(x) for x in model.onsets(audio, sr, thresh=threshold)]
 
 
 def _read_envelope(wav_path, env_rate=ENV_RATE, max_seconds=MAX_SECONDS):
@@ -234,24 +481,7 @@ def _lattice_fit(onsets, period0, max_iter=4, inlier_s=0.040, keep_s=0.060):
     return first, period, res
 
 
-def detect_bpm(wav_path, min_bpm=MIN_BPM, max_bpm=MAX_BPM):
-    """Detect BPM from an isolated percussive stem.
-
-    Returns a dict with keys: bpm (float, 2dp), bpm_rounded (int),
-    period (sec), first_beat_sec (the fitted beat-grid phase — where the kick
-    grid starts in the file, used to align later versions to the bar),
-    n_onsets, n_inliers, residual_ms. Returns None when there aren't enough
-    onsets to trust.
-    """
-    env, er = _read_envelope(wav_path)
-    # >>> CRNN Kick Detector hand-off seam <<<
-    # This is the plug-in point for Sam's dedicated Kick Detector (a CRNN that
-    # emits clean per-kick onsets): swap `_pick_onsets` for the model's onset
-    # times here, then the lattice fit below is unchanged. Feed the isolated kick
-    # stem straight in (our stems are pre-separated — skip Demucs). Gate it behind
-    # a flag/env so the pure-stdlib path stays the default until it's validated.
-    # See memory: kick-detector-integration-planned.
-    onsets = _pick_onsets(env, er)
+def _fit_bpm_from_onsets(onsets, min_bpm, max_bpm, detector, detector_error=None):
     if len(onsets) < MIN_ONSETS:
         return None
     period0 = _seed_period(onsets, min_bpm, max_bpm)
@@ -275,7 +505,7 @@ def detect_bpm(wav_path, min_bpm=MIN_BPM, max_bpm=MAX_BPM):
     if period and (first_beat_sec < 0 or first_beat_sec > 8 * period):
         first_beat_sec = first % period
     first_beat_sec = max(first_beat_sec, 0.0)
-    return {
+    out = {
         "bpm": round(bpm, 2),
         "bpm_rounded": int(round(bpm)),
         "period": period,
@@ -284,7 +514,54 @@ def detect_bpm(wav_path, min_bpm=MIN_BPM, max_bpm=MAX_BPM):
         "n_onsets": len(onsets),
         "n_inliers": len(inliers),
         "residual_ms": round(_median(inliers), 2) if inliers else None,
+        "detector": detector,
     }
+    if detector_error:
+        out["detector_error"] = detector_error
+    return out
+
+
+def _bpm_result_is_credible(result):
+    if not result:
+        return False
+    n = max(result.get("n_onsets", 0), 1)
+    ratio = result.get("n_inliers", 0) / n
+    res = result.get("residual_ms")
+    res = 999.0 if res is None else float(res)
+    return ratio >= 0.5 and res <= 5.0
+
+
+def detect_bpm(wav_path, min_bpm=MIN_BPM, max_bpm=MAX_BPM):
+    """Detect BPM from an isolated percussive stem.
+
+    Returns a dict with keys: bpm (float, 2dp), bpm_rounded (int),
+    period (sec), first_beat_sec (the fitted beat-grid phase — where the kick
+    grid starts in the file, used to align later versions to the bar),
+    n_onsets, n_inliers, residual_ms. Returns None when there aren't enough
+    onsets to trust.
+    """
+    detector_error = None
+    try:
+        model_onsets = _kick_model_onsets(wav_path)
+    except Exception as exc:  # noqa: BLE001 - model path must never kill BPM fallback
+        model_onsets = None
+        detector_error = str(exc)
+    if model_onsets is not None and len(model_onsets) >= MIN_ONSETS:
+        model_result = _fit_bpm_from_onsets(
+            model_onsets, min_bpm, max_bpm, "kick_crnn_v3")
+        if _bpm_result_is_credible(model_result):
+            return model_result
+        if model_result:
+            detector_error = (
+                "Kick Detector V3 lock was low-confidence "
+                f"({model_result.get('n_inliers')}/{model_result.get('n_onsets')} "
+                f"on grid, +/-{model_result.get('residual_ms')}ms); used energy fallback"
+            )
+
+    env, er = _read_envelope(wav_path)
+    onsets = _pick_onsets(env, er)
+    return _fit_bpm_from_onsets(
+        onsets, min_bpm, max_bpm, "energy", detector_error=detector_error)
 
 
 def _main():

@@ -33,8 +33,8 @@
       "notes": "Do not replace with XML libraries; Ableton is sensitive to formatting. Since 2026-07-02: find_audio_regions(return_peak=True) returns TRUE PEAK (loudest single sample), not windowed RMS, so a sparse-but-real stem (quiet shaker) isn't false-flagged as silent; SILENCE_FLOOR_DB is -66 dBFS under the new semantics (both numpy and stdlib paths compute true peak, verified to agree)."
     },
     "Source/bpm_detector.py": {
-      "purpose": "Pure-stdlib BPM detection from kick/drum onsets.",
-      "notes": "Returns both folded grid phase and first_actual_onset_sec so multi-version alignment can use the physical timing anchor. A CRNN Kick Detector hand-off seam is documented (comment only) at the onset step in detect_bpm \u2014 Sam is training a dedicated model; do not touch BPM/kick detection until he says it's ready."
+      "purpose": "BPM detection from kick/drum onsets, with optional Kick Detector V3 CRNN onset picking.",
+      "notes": "Returns both folded grid phase and first_actual_onset_sec so multi-version alignment can use the physical timing anchor. As of 2026-07-09, detect_bpm can lazy-call the sibling Kick Detector repo's Source/infer.py::KickModel with Models/kick_crnn_V3.pt and feed those onsets into the existing lattice fit; the pure-stdlib energy onset picker remains default/fallback. On STUDIO-2 the local gitignored Config/project_builder.json enables V3 through subprocess mode via py -3.14 because the Project Setup Python 3.13 runtime lacks librosa."
     },
     "Source/bounce.py": {
       "purpose": "Flat-reference WAV summing with numpy fast path and stdlib fallback.",
@@ -229,7 +229,7 @@
       "pending": [
         "Sam: rebuild any already-built projects to pick up the Reports/ folder + silence/classifier fixes (existing built projects keep old behaviour until rebuilt)",
         "Sam: run the Studio App / build_exe.py, stand up the public releases feed (still outstanding from earlier sessions)",
-        "CRNN Kick Detector integration (Sam's dedicated project) will become the tempo anchor - BPM/kick detection work is on hold until then",
+        "CRNN Kick Detector V3 is now available as the tempo anchor through the optional BPM/onset integration added on 2026-07-09",
         "Apply nested sub-groups to the multi-version build path (still open from 2026-06-30)"
       ]
     },
@@ -266,11 +266,33 @@
         ".github/ai-activity-log.md"
       ],
       "pending": [
-        "Sam: rebuild HARTY (and any multi-version project with a long producer version-folder name) to pick up the flat-ref MAX_PATH fix + FX Fills classification/pairing fix",
+        "HARTY rebuild no longer active per Sam on 2026-07-09; do not treat it as the next task.",
         "Sam: run the Studio App and eyeball the branding/drag-drop/tempo-rebuild control on a real machine",
-        "CRNN Kick Detector integration -- Sam actively training (600+ tracks via Demucs as of 2026-07-06); do not touch BPM/kick detection until he says it's ready",
+        "Kick Detector V3 is now wired into this repo's BPM/onset path and enabled locally on STUDIO-2; next useful check is one real auto-BPM build opened in Ableton.",
         "Deep-nesting classification (audit A4) and RF64 >4GB support -- deliberately deferred, need their own focused sessions",
         "Sam-side EXE/updater feed hosting still outstanding from earlier sessions"
+      ]
+    },
+    {
+      "date": "2026-07-09",
+      "summary": "Codex wired the completed Kick Detector V3 into Ableton Project Setup's BPM path, then MiniMax reviewed it independently. Source/bpm_detector.py now has a lazy optional CRNN onset provider that calls the sibling Kick Detector repo's infer.KickModel with Models/kick_crnn_V3.pt and feeds those onsets into the existing lattice fit; the legacy pure-stdlib energy picker remains default/fallback. Added subprocess mode because Project Setup's Python 3.13 lacks librosa while Kick Detector's Python 3.14 runtime has the model stack. MiniMax caught real follow-ups: subprocess stdout noise could corrupt JSON (fixed with stdout redirection), CRNN failure/low-confidence fallback was not visible (fixed via bpm_detector_error + flags), and a low-confidence CRNN lattice should fall back to energy rather than sticking with a bad model result (fixed after Fallon kick-bass bus exposed a bad 113-ish V3 lock). Source/project_builder.py exposes config/env knobs, writes bpm_detector/bpm_detector_error into Session Report.json, and local gitignored Config/project_builder.json on STUDIO-2 is enabled with py -3.14. Validated with fake lazy-import + noisy-subprocess tests, config tests, BPM reconciliation tests, full suite, a real read-only Ak1ra kick-stem smoke (122 BPM via kick_crnn_v3, 228 onsets, 224 inliers, 2.47ms residual), and a throwaway Fallon multi-version build validated at 128 BPM.",
+      "files_changed": [
+        "Source/bpm_detector.py",
+        "Source/project_builder.py",
+        "Config/project_builder.example.json",
+        "Config/project_builder.json (local gitignored)",
+        "Tests/test_kick_detector_integration.py (new)",
+        "Tests/test_bpm_reconcile.py",
+        "Tests/test_project_config.py",
+        "Documentation/AI_CONTEXT.md",
+        "Documentation/TOOLBOX.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Run one normal Studio App or CLI build with auto-BPM and a real stem pack, then open it in Ableton to eyeball the grid.",
+        "Keep legacy energy onset fallback in place; if Kick Detector readout defaults change, update bpm_detector.py and config together.",
+        "Deep-nesting classification (audit A4) and RF64 >4GB support remain deliberately deferred."
       ]
     }
   ],

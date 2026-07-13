@@ -5,5 +5,12 @@
   "python_ml_exe": "",
   "enable_ml_classifier": true,
   "ml_timeout_per_stem_sec": 240,
-  "ml_timeout_base_sec": 180
+  "ml_timeout_base_sec": 180,
+  "enable_kick_detector": false,
+  "kick_detector_model_path": "",
+  "kick_detector_source_dir": "",
+  "kick_detector_threshold": 0.3,
+  "kick_detector_device": "cpu",
+  "kick_detector_python_exe": "",
+  "kick_detector_timeout_sec": 120
 }

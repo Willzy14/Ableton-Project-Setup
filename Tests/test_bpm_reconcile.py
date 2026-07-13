@@ -117,6 +117,28 @@ def test_no_label_audio_decides():
         assert not any("overrode" in f for f in flags)
 
 
+def test_detector_error_is_surfaced_with_energy_fallback():
+    original = pb.detect_project_bpm
+    try:
+        pb.detect_project_bpm = lambda _classified: ({
+            "bpm": 124.0,
+            "bpm_rounded": 124,
+            "n_onsets": 16,
+            "n_inliers": 16,
+            "residual_ms": 1.0,
+            "detector": "energy",
+            "detector_error": "model unavailable",
+        }, Path("Kick.wav"))
+        bpm, meta, flags = _resolve_project_bpm({"kick": [Path("Kick.wav")]}, None)
+    finally:
+        pb.detect_project_bpm = original
+
+    assert bpm == 124.0
+    assert meta["detector"] == "energy"
+    assert meta["detector_error"] == "model unavailable"
+    assert any("Kick Detector V3 could not run" in f for f in flags)
+
+
 def test_no_label_no_audio_returns_none():
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / "Silence.wav"
