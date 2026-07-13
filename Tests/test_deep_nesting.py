@@ -86,14 +86,35 @@ def test_nested_ref_not_a_version_member():
     assert detect_versions(root) is None
 
 
-def test_output_folders_are_skipped():
-    # A whole built project (Reports/, Backup/) dropped in must not re-ingest
-    # its own outputs as stems.
+def test_user_named_folders_not_silently_dropped():
+    # A producer folder that happens to be named like the tool's own output
+    # (Backup/Reports) must NOT be silently skipped — surfacing beats dropping
+    # (MiniMax #1). The manifest and classify agree, so the coverage backstop
+    # never has to fire, but nothing vanishes.
     root = _touch(tempfile.mkdtemp(), [
         "Kick.wav", "Snare.wav", "Bass.wav",
-        "Reports/Session Report.wav", "Backup/old.wav"])
-    assert _placed(root) == 3
-    assert len(_all_source_audio(root)) == 3        # manifest agrees
+        "Reports/extra_a.wav", "Backup/extra_b.wav"])
+    assert _placed(root) == 5
+    assert len(_all_source_audio(root)) == 5
+
+
+def test_macosx_and_dotfiles_still_skipped():
+    root = _touch(tempfile.mkdtemp(), [
+        "Kick.wav", "Snare.wav",
+        "__MACOSX/._Kick.wav", ".hidden/junk.wav", "._Snare.wav"])
+    assert _placed(root) == 2                        # only the two real stems
+    assert len(_all_source_audio(root)) == 2
+
+
+def test_appledouble_not_counted_in_versions():
+    # macOS AppleDouble sidecars must not inflate version file counts / _pick_base
+    # (MiniMax #4). Each version has 2 REAL stems despite the ._ twins.
+    root = _touch(tempfile.mkdtemp(), [
+        "Extended/Kick.wav", "Extended/._Kick.wav", "Extended/Snare.wav",
+        "Radio/Kick.wav", "Radio/._Kick.wav", "Radio/Snare.wav"])
+    v = detect_versions(root)
+    assert v is not None and len(v) == 2, v
+    assert all(len(ver["files"]) == 2 for ver in v), [len(x["files"]) for x in v]
 
 
 def test_flat_and_one_level_unchanged():
@@ -120,6 +141,22 @@ def test_collision_safe_dest_disambiguates_different_sources():
     assert d2.name != d1.name, (d1.name, d2.name)   # no silent overwrite
     # same source again -> same dest (rebuild into an existing folder)
     assert _copy_stem_dest(f1, audio, used).name == "Loop.wav"
+
+
+def test_collision_many_same_basename_all_distinct():
+    # Many different sources sharing one basename must all get distinct dests
+    # (unbounded counter — never silently overwrites, never hangs). MiniMax #3.
+    root = Path(tempfile.mkdtemp())
+    srcs = []
+    for i in range(60):
+        p = root / f"g{i}" / "WAV" / "Loop.wav"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"RIFF")
+        srcs.append(p)
+    audio = Path(tempfile.mkdtemp())
+    used = {}
+    names = [_copy_stem_dest(s, audio, used).name for s in srcs]
+    assert len(set(n.lower() for n in names)) == 60, "collision produced a duplicate dest"
 
 
 # --- end-to-end build + hard guard ---------------------------------------
@@ -158,6 +195,24 @@ def test_audio_but_no_working_stems_raises():
         except ValueError as e:
             raised = "couldn't place" in str(e) or "working stems" in str(e)
         assert raised, "expected a hard-guard ValueError for a stemless pack"
+
+
+def test_all_stems_inside_ref_folder_raises():
+    # Every stem lives in a REF/ folder -> all parked as refs, zero working
+    # stems -> loud hard-guard error, not a silent near-empty build (MiniMax #2).
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        src = tmp / "RefOnly"
+        _wav(src / "REF" / "Kick.wav", 60)
+        _wav(src / "REF" / "Snare.wav", 200)
+        _wav(src / "REF" / "Bass.wav", 90)
+        raised = False
+        try:
+            build_project(str(src), "X", "Y", "Z", bpm=120,
+                          output_base=str(tmp / "out"), use_ml=False)
+        except ValueError as e:
+            raised = "working stems" in str(e)
+        assert raised, "expected a hard-guard ValueError when all audio is in REF/"
 
 
 if __name__ == "__main__":

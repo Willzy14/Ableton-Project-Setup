@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from itertools import chain, count
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -1032,14 +1033,16 @@ def _copy_stem_dest(f, audio_dir, used):
     if prior is None or Path(prior).absolute() == Path(f).absolute():
         used[key] = f
         return audio_dir / f.name
+    # Different source, same basename — disambiguate. Try the parent folder name
+    # first (readable), then an unbounded counter (lazy, so it can NEVER fall
+    # through to silently overwriting the first file's copy).
     tag = _safe_filename(f.parent.name) or "alt"
-    for cand in [f"{f.stem} ({tag}){f.suffix}",
-                 *(f"{f.stem} ({i}){f.suffix}" for i in range(2, 1000))]:
+    candidates = chain([f"{f.stem} ({tag}){f.suffix}"],
+                       (f"{f.stem} ({i}){f.suffix}" for i in count(2)))
+    for cand in candidates:
         if cand.lower() not in used:
             used[cand.lower()] = f
             return audio_dir / cand
-    used[key] = f
-    return audio_dir / f.name
 
 
 def _all_source_audio(folder):
@@ -1280,8 +1283,9 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     if manifest and not (sum(len(v) for v in classified.values()) or unclassified):
         raise ValueError(
             "Found " + str(len(manifest)) + " audio file(s) but couldn't place "
-            "any as working stems — the pack may be nested in an unexpected way "
-            "or contain only reference/master files. Check the folder structure.")
+            "any as working stems — the pack may contain only reference/master "
+            "files, have all its audio inside a 'ref'/'updated stems' folder, or "
+            "be nested in an unexpected way. Check the folder structure.")
 
     # Normalise non-WAV audio (AIFF/MP3/FLAC dropped in with the stems) to WAV
     # up front, so every downstream reader (regions, BPM, bounce, analysis) only

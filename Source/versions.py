@@ -44,16 +44,15 @@ def special_dir_kind(dirname):
     return None
 
 
-# Folders a recursive stem scan must never descend into: macOS junk, dotfiles,
-# and the tool's OWN output folders — so a rebuilt project, or a whole built
-# project dropped in as input, isn't re-ingested as if the outputs were stems.
-_OUTPUT_DIRS = {"reports", "ableton project info", "master renders", "backup"}
-
-
 def is_skip_dir(dirname):
-    """True for a subfolder recursion should skip entirely (not the stems)."""
+    """True for a subfolder recursion should skip entirely: macOS junk + dotfiles.
+
+    Deliberately does NOT skip folders named like the tool's own output (Reports/
+    Backup/…): a producer who legitimately names a stem folder that way must not
+    have it silently dropped — the far more important guarantee. A dropped-in
+    built project's outputs are surfaced (masters classify as refs), never eaten."""
     name = str(dirname)
-    return name == "__MACOSX" or name.startswith(".") or name.lower() in _OUTPUT_DIRS
+    return name == "__MACOSX" or name.startswith(".")
 
 # Tokens that mark an alternate VERSION rather than a different element — a
 # session/version code (Sam's "S16"/"S17"), or an arrangement keyword. Stripping
@@ -112,25 +111,31 @@ def dry_pair_key(path):
     return " ".join(toks)
 
 
+def _is_audio_file(f):
+    # macOS AppleDouble sidecars ('._Kick.wav') and other dotfiles are never
+    # stems — filtering them here keeps version counts / _pick_base honest and in
+    # step with classify_stems + _all_source_audio (which also drop them).
+    return f.is_file() and f.suffix.lower() in AUDIO_EXT and not f.name.startswith(".")
+
+
 def _audio_here(folder):
     """Direct audio children only — the top-level-stem test must stay shallow so
     a nested pack doesn't fold its whole tree into the baseline."""
-    return [f for f in sorted(Path(folder).iterdir())
-            if f.is_file() and f.suffix.lower() in AUDIO_EXT]
+    return [f for f in sorted(Path(folder).iterdir()) if _is_audio_file(f)]
 
 
 def _audio_under(folder):
     """All audio anywhere under `folder`, depth-first in sorted order — sees
     through a format wrapper (Extended/WAV/… , Drums/24bit WAV/…). Skips
-    __MACOSX/dotfile/output folders AND special (ref/update) branches: a REF/ or
-    'updated stems/' nested inside a version is gathered separately by
-    project_builder, so it must not count as a version member (else it both
-    inflates the mirror overlap and gets double-wired). One level of nesting is
-    byte-identical to the old _audio_in."""
+    __MACOSX/dotfiles AND special (ref/update) branches: a REF/ or 'updated stems/'
+    nested inside a version is gathered separately by project_builder, so it must
+    not count as a version member (else it both inflates the mirror overlap and
+    gets double-wired). One level of plain nesting is byte-identical to the old
+    _audio_in."""
     out = []
     for entry in sorted(Path(folder).iterdir()):
         if entry.is_file():
-            if entry.suffix.lower() in AUDIO_EXT:
+            if _is_audio_file(entry):
                 out.append(entry)
         elif entry.is_dir() and not is_skip_dir(entry.name) \
                 and not special_dir_kind(entry.name):
