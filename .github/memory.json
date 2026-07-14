@@ -340,6 +340,32 @@
         "Optional fast-follow: HTTPS + required (non-empty) SHA-256 for the release feed (Codex nice-to-have).",
         "RF64/WAVE64 (>4GB WAV) support remains deliberately deferred."
       ]
+    },
+    {
+      "date": "2026-07-14",
+      "summary": "SHIPPED v0.1.0: packaged, branded, self-updating EXE distributed to Sam's machines and running real jobs (multiple packs built + opened in Ableton, correct). Pivoted the auto-update to a PRIVATE releases repo because the tool MUST NOT be publicly downloadable (Sam's hard rule): updater.py rewritten to hit Willzy14/StemToAbleton-Releases with a baked READ-ONLY fine-grained PAT (Bearer auth; a _NoAuthRedirect handler strips the auth header on the signed-asset 302; sha256 parsed from the release body, case-insensitive). build_exe.py bakes the token from a gitignored release_token.local into the bundled update_feed.json at build time only (the committed feed keeps token empty). publish_release.py cuts a gh release at the current VERSION with the EXE + sha256 using Sam's own gh login (NO publish token baked). This session end-to-end: created + verified the read-only PAT (HTTP 200 read of the private repo), seeded the empty releases repo with a README (GitHub refuses a release on a repo with no default branch), published the v0.1.0 baseline release, and validated the app's EXACT update path live with the baked token (/releases/latest -> HTTP 200, tag v0.1.0, asset StemToAbleton.exe 25MB, sha256 == the built EXE). Also shipped a custom app icon (Assets/AppIcon.ico, Wired Masters monogram + Ableton clip-strip on a dark rounded tile, multi-res 16-256px) as the EXE --icon, and switched the UI header to the matching monogram tile (Web/assets/brand_tile.png), sized 40->54->64px on Sam's eye, so the running app reads as one identity with its taskbar icon. WebView2 shipped LEAN (25MB, no bundled runtime) relying on the machine's own WebView2 + the in-app preflight/installer prompt; bundling the ~150MB Fixed-Version runtime was rejected for Sam's fleet. Started a batched Snag List (Documentation/Snag List.md): post-ship issues accumulate there and fold into ONE update, not a release per bug (Sam's policy). First entry SNAG-001: on an Extended+Radio-edit pack the BPM was correct and the Radio edit landed on grid but the Extended mix was slightly off grid (low, non-blocking).",
+      "files_changed": [
+        "Studio App/updater.py",
+        "Studio App/build_exe.py",
+        "Studio App/publish_release.py",
+        "Studio App/update_feed.json",
+        "Studio App/app.py",
+        "Studio App/.gitignore",
+        "Studio App/Web/index.html",
+        "Studio App/Web/styles.css",
+        "Studio App/Web/assets/brand_tile.png (new)",
+        "Assets/AppIcon.ico (new)",
+        "Assets/AppIcon.png (new)",
+        "Documentation/Snag List.md (new)",
+        "Documentation/AI_CONTEXT.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "SAM-SIDE: clean-machine smoke test of the shipped EXE (first run + WebView2 preflight, folder + zip build, forced worker-fail 'Try again', click Update once to watch swap+relaunch, open the .als) BEFORE relying on it in the wild.",
+        "Triage the batched Snag List (Documentation/Snag List.md) when a batch is worth shipping; SNAG-001 = Extended-mix off-grid (needs a real Extended+Radio project from Sam to repro).",
+        "RF64/WAVE64 (>4GB WAV) support remains deliberately deferred."
+      ]
     }
   ],
   "decisions": [
@@ -392,6 +418,16 @@
       "date": "2026-07-08",
       "decision": "M1 refactor extracts the shared HEAD (_make_project_context) and TAIL (_patch_and_validate/_finish_project) from the single- and multi-version build paths, but keeps the two middle LAYOUT logics separate (single=one timeline, multi=versions stacked on shared tracks) rather than forcing a full pv-based unification.",
       "why": "A full unification would drag Fallon's version-stack alignment model into simple single-version builds and risk subtly changing behaviour Sam relies on daily; the audit's actual complaint (duplicated logic silently drifting apart) is fixed by sharing the head/tail and closing the three real parity gaps (silent/wet-dry/updated-stem), which a 3-brain review (Codex+MiniMax) confirmed was the right scope."
+    },
+    {
+      "date": "2026-07-14",
+      "decision": "The Studio App ships as a self-contained EXE that auto-updates from a PRIVATE GitHub releases repo (Willzy14/StemToAbleton-Releases) using a baked READ-ONLY, revocable fine-grained PAT. Both the source repo and the releases repo are private; no publish token is ever baked (publishing uses Sam's own gh login). Shipped ML-off and WebView2-lean (no bundled runtime).",
+      "why": "Sam's hard rule: the tool must not be publicly downloadable at all. The earlier public-releases-feed model (chosen so no token need be baked) would have left the EXE open to anyone; keeping the releases repo private requires an auth token in the app, so the token is scoped read-only + revocable and baked at build time from a gitignored release_token.local (never committed). Supersedes the 2026-06-29 public-feed distribution decision."
+    },
+    {
+      "date": "2026-07-14",
+      "decision": "Post-ship issues are batched in Documentation/Snag List.md and folded into a single update, rather than cutting a release per bug. Only an actual roadblock triggers an immediate build+publish.",
+      "why": "Sam's call after the first non-blocking snag (SNAG-001, Extended-mix off-grid): avoid version-spam and churn over minor, easily-hand-fixed issues; collect enough to justify a release, then ship them together."
     }
   ]
 }
