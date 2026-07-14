@@ -122,7 +122,7 @@ html, body {
 .brand-mark {
   /* The app-icon tile: teal WM monogram on a dark rounded square — matches the
      EXE/taskbar icon 1:1 so the app reads as one identity. */
-  width: 40px; height: 40px; flex: 0 0 auto;
+  width: 64px; height: 64px; flex: 0 0 auto;
   object-fit: contain; border-radius: var(--radius-sm);
   border: 1px solid var(--stroke-cyan);
   box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 12px rgba(46,230,214,0.16);
