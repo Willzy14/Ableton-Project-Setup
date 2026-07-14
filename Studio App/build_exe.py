@@ -112,6 +112,14 @@ def main():
     if wv2:
         datas.append(wv2)
 
+    # Build OFF Dropbox: PyInstaller's manifest write (EndUpdateResourceW) fails
+    # intermittently when the EXE is created inside a Dropbox-synced folder —
+    # Dropbox locks the file mid-write (retries eventually push through, but it's
+    # flaky). Build to a local temp dir, then drop the finished EXE into dist/ as
+    # a single completed-file copy.
+    build_root = Path(tempfile.gettempdir()) / "stemtoableton_build"
+    shutil.rmtree(build_root, ignore_errors=True)
+    tmp_dist = build_root / "dist"
     args = [
         str(APP_DIR / "app.py"),
         "--name", NAME,
@@ -119,9 +127,9 @@ def main():
         "--windowed",
         "--noconfirm",
         "--clean",
-        "--distpath", str(APP_DIR / "dist"),
-        "--workpath", str(APP_DIR / "build"),
-        "--specpath", str(APP_DIR),
+        "--distpath", str(tmp_dist),
+        "--workpath", str(build_root / "build"),
+        "--specpath", str(build_root),
         "--paths", str(SOURCE_DIR),
         "--paths", str(APP_DIR),
     ]
@@ -138,9 +146,22 @@ def main():
     import PyInstaller.__main__ as pyi
     pyi.run(args)
 
-    out = APP_DIR / "dist" / (NAME + ".exe")
-    print("\nBuilt: " + str(out) if out.exists() else "\nBuild finished (check dist/).")
+    built = tmp_dist / (NAME + ".exe")
+    final = APP_DIR / "dist" / (NAME + ".exe")
+    if built.exists():
+        final.parent.mkdir(parents=True, exist_ok=True)
+        import time
+        for attempt in range(8):          # a completed-file copy; retry a Dropbox lock
+            try:
+                shutil.copy2(built, final)
+                break
+            except PermissionError:
+                time.sleep(1.0)
+        print("\nBuilt: " + str(final))
+    else:
+        print("\nBuild finished but no EXE at " + str(built) + " — check the log.")
     shutil.rmtree(work, ignore_errors=True)
+    shutil.rmtree(build_root, ignore_errors=True)
     return 0
 
 
