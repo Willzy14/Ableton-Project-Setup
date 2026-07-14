@@ -709,7 +709,7 @@ def _find_energetic_point(path, win_sec=2.0, intro_skip_sec=8.0, smooth_sec=8.0)
     return float(int(np.argmax(sm)) * win_sec)
 
 
-def _make_refcompare_track(refcompare_files, audio_folder, start_beat, bpm):
+def _make_refcompare_track(refcompare_files, audio_folder, start_beat, bpm, used=None):
     """Build the single 'References' track — other artists' tracks laid out one
     after another from `start_beat` (to the RIGHT of the song), Ext. Out, left
     on, own colour, with a numbered key-mapped locator on the energetic part of
@@ -717,20 +717,20 @@ def _make_refcompare_track(refcompare_files, audio_folder, start_beat, bpm):
     the single- and multi-version build paths."""
     if not refcompare_files:
         return [], []
+    if used is None:
+        used = {}
     locators = []
     cursor = _next_phrase_boundary(start_beat + 16.0)
     clips = []
     for i, f in enumerate(refcompare_files):
-        dest = audio_folder / f.name
-        if not dest.exists():
-            shutil.copy2(f, dest)
+        dest = _place_stem_file(f, audio_folder, used)
         n_frames, sr_hz, _ = get_wav_info(dest)
         dur_beats = (n_frames / float(sr_hz) / 60.0) * float(bpm) if sr_hz else 8.0
         energetic_sec = _find_energetic_point(dest)
         key = str(i + 1) if i < 9 else ("0" if i == 9 else None)  # 1..9 then 0
         locators.append((cursor + (energetic_sec / 60.0) * float(bpm),
                          (key + " · " if key else "") + f.stem[:28], key))
-        clips.append({"file_path": dest, "rel_path": "Audio/" + f.name,
+        clips.append({"file_path": dest, "rel_path": "Audio/" + dest.name,
                       "regions": None, "start_beat": cursor, "clip_name": f.stem})
         print("  ref " + str(i + 1) + " (one track, Ext. Out, on): " + f.name
               + ("  [energetic @ %.0fs]" % energetic_sec))
@@ -1043,6 +1043,33 @@ def _copy_stem_dest(f, audio_dir, used):
         if cand.lower() not in used:
             used[cand.lower()] = f
             return audio_dir / cand
+
+
+def _place_stem_file(f, audio_dir, used):
+    """Copy stem `f` into `audio_dir` and return the destination — the ONE robust
+    copy path every stem/ref/updated/preseeded/leftover copy goes through:
+
+    - collision-safe name (`_copy_stem_dest`) so two different sources sharing a
+      basename don't clash once we scan subfolders to any depth;
+    - SIZE-VERIFIED: an existing dest is trusted only if its byte size matches the
+      source, so a truncated file left by a crashed/interrupted build (or an
+      auto-retry) is re-copied, never silently referenced (Codex pre-package
+      review — the validator only checks a path EXISTS, not that it's intact);
+    - a file already sitting in `audio_dir` (a pre-seeded ref) is used in place
+      (never copied onto itself)."""
+    f = Path(f)
+    audio_dir = Path(audio_dir)
+    if f.parent == audio_dir:              # already in the project's Audio folder
+        used[f.name.lower()] = f
+        return f
+    dest = _copy_stem_dest(f, audio_dir, used)
+    try:
+        need = (not dest.exists()) or dest.stat().st_size != f.stat().st_size
+    except OSError:                        # a stat hiccup must not skip the copy
+        need = True
+    if need:
+        shutil.copy2(f, dest)
+    return dest
 
 
 def _all_source_audio(folder):
@@ -1378,13 +1405,11 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
 
     print("\nCopying stems and detecting audio regions...")
     stems = []
-    used_dests = {}   # collision-safe copies once we recurse subfolders
+    used_dests = {}   # ONE collision-safe/size-verified copy ledger for this build
     for cat in sorted(classified.keys(), key=lambda c: CATEGORIES[c]["order"]):
         color = cat_color(cat)
         for f in classified[cat]:
-            dest = _copy_stem_dest(f, audio_folder, used_dests)
-            if not dest.exists():
-                shutil.copy2(f, dest)
+            dest = _place_stem_file(f, audio_folder, used_dests)
             # FX (risers/uplifters build from near-silence) get a lead-in so
             # the ramp isn't trimmed; everything else trims tight at the front.
             regions, true_peak_db = find_audio_regions(
@@ -1515,9 +1540,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             by_key.setdefault(_match_key(s["file_path"]), idx)
         matched, unmatched = [], []
         for f in updated_files:
-            dest = audio_folder / f.name
-            if not dest.exists():
-                shutil.copy2(f, dest)
+            dest = _place_stem_file(f, audio_folder, used_dests)
             regions, _peak = find_audio_regions(dest, return_peak=True)
             orig_idx = by_key.get(_match_key(f))
             orig = stems[orig_idx] if orig_idx is not None else None
@@ -1526,7 +1549,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                 "clip_name": f.stem,
                 "category": orig["category"] if orig else "music",
                 "color": UPDATED_TRACK_COLOR,
-                "file_path": dest, "rel_path": "Audio/" + f.name,
+                "file_path": dest, "rel_path": "Audio/" + dest.name,
                 "regions": regions, "muted": True, "updated": True,
             }
             if orig:
@@ -1549,16 +1572,14 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     ref_tracks = []
 
     for f in references:
-        dest = audio_folder / f.name
-        if not dest.exists():
-            shutil.copy2(f, dest)
+        dest = _place_stem_file(f, audio_folder, used_dests)
         ref_tracks.append({
             "name": f.stem,
             "clip_name": f.stem,
             "category": "reference",
             "color": REF_TRACK_COLOR,
             "file_path": dest,
-            "rel_path": "Audio/" + f.name,
+            "rel_path": "Audio/" + dest.name,
             "regions": None,
         })
 
@@ -1568,9 +1589,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
                       if f.stem.lower() not in source_names
                       and "FLAT REF" not in f.name.upper()]
     for f in preseeded_refs:
-        dest = audio_folder / f.name
-        if f.parent != audio_folder and not dest.exists():
-            shutil.copy2(f, dest)
+        dest = _place_stem_file(f, audio_folder, used_dests)
         print("  wiring in pre-seeded reference: " + f.name)
         ref_tracks.append({
             "name": f.stem,
@@ -1578,7 +1597,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             "category": "reference",
             "color": REF_TRACK_COLOR,
             "file_path": dest,
-            "rel_path": "Audio/" + f.name,
+            "rel_path": "Audio/" + dest.name,
             "regions": None,
         })
 
@@ -1594,7 +1613,7 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
             max_end_sec = max(max_end_sec, _re)
     content_end = CLIP_START_BEATS + (max_end_sec / 60.0) * float(bpm)
     refcompare_tracks, ref_locators = _make_refcompare_track(
-        refcompare_files, audio_folder, content_end, bpm)
+        refcompare_files, audio_folder, content_end, bpm, used=used_dests)
 
     mix_files = [s["file_path"] for s in stems if not s.get("updated")]
     print("\nBouncing flat reference (summing " + str(len(mix_files)) + " mix stems)...")
@@ -1729,13 +1748,10 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
 
     version_audio_dir.mkdir(parents=True, exist_ok=True)
 
-    used_dests = {}   # collision-safe copies within this version's Audio folder
+    used_dests = {}   # collision-safe/size-verified copies for this version's Audio dir
 
     def _copy(f):
-        dest = _copy_stem_dest(f, version_audio_dir, used_dests)
-        if not dest.exists():
-            shutil.copy2(f, dest)
-        return dest
+        return _place_stem_file(f, version_audio_dir, used_dests)
 
     mix_stems = []
     for cat in sorted(classified.keys(), key=lambda c: CATEGORIES[c]["order"]):
@@ -1823,6 +1839,16 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
         pv.append({"name": v["name"], "vname": vname, "rel_prefix": rel_prefix,
                    "vdir": audio_folder / vname, "mix": mix, "refs": refs,
                    "buses": buses, "dry": drys})
+
+    # Hard guard (parity with the single-version path): a pack with audio in it
+    # must yield at least one WORKING stem across its versions — fail loudly rather
+    # than emit a silent near-empty project (refs/buses/dry don't count).
+    if not sum(len(p["mix"]) for p in pv):
+        raise ValueError(
+            "Found audio across " + str(len(pv)) + " version(s) but couldn't place "
+            "any as working stems — the pack may contain only reference/master "
+            "files, have its stems inside a 'ref'/'updated stems' folder, or be "
+            "nested in an unexpected way. Check the folder structure.")
 
     bpm_meta = None
     bpm_flags = []
@@ -2055,14 +2081,15 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     preseeded_refs = [f for f in preseeded
                       if f.stem.lower() not in source_names
                       and "FLAT REF" not in f.name.upper()]
+    # ONE collision-safe/size-verified ledger for everything copied into the top
+    # Audio/ folder (preseeded, refcompare, updated, leftovers).
+    used_top = {}
     for f in preseeded_refs:
-        dest = audio_folder / f.name
-        if f.parent != audio_folder and not dest.exists():
-            shutil.copy2(f, dest)
+        dest = _place_stem_file(f, audio_folder, used_top)
         print("  wiring in pre-seeded reference: " + f.name)
         all_stems.append({"name": f.stem, "clip_name": f.stem,
                           "category": "reference", "color": REF_TRACK_COLOR,
-                          "file_path": dest, "rel_path": "Audio/" + f.name,
+                          "file_path": dest, "rel_path": "Audio/" + dest.name,
                           "regions": None, "base_start_beat": offsets[0],
                           "extra_clips": []})
 
@@ -2072,7 +2099,7 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     content_end = max(offsets[k] + pv[k].get("length_beats", 0.0)
                       for k in range(len(pv)))
     rc_tracks, rc_locs = _make_refcompare_track(
-        refcompare_files, audio_folder, content_end, bpm)
+        refcompare_files, audio_folder, content_end, bpm, used=used_top)
     all_stems += rc_tracks
     locators = list(locators) + rc_locs
     # Updated / revised stems: match each to the working track it replaces (by
@@ -2087,16 +2114,14 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                     and t.get("group_key") != "dry" and t.get("file_path")):
                 by_key.setdefault(_match_key(t["file_path"]), t)
         for f in updated_files:
-            dest = audio_folder / f.name
-            if not dest.exists():
-                shutil.copy2(f, dest)
+            dest = _place_stem_file(f, audio_folder, used_top)
             regions, _peak = find_audio_regions(dest, return_peak=True)
             orig = by_key.get(_match_key(f))
             t = {"name": ((orig["name"] if orig else f.stem) + " (updated)"),
                  "clip_name": f.stem,
                  "category": orig["category"] if orig else "music",
                  "color": UPDATED_TRACK_COLOR,
-                 "file_path": dest, "rel_path": "Audio/" + f.name,
+                 "file_path": dest, "rel_path": "Audio/" + dest.name,
                  "regions": regions, "muted": True, "updated": True,
                  "base_start_beat": offsets[0], "extra_clips": []}
             if orig:
@@ -2118,12 +2143,10 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
     # master, a name-token minority stem, or a stray file.)
     leftover_names = []
     for f in leftover_files:
-        dest = audio_folder / f.name
-        if not dest.exists():
-            shutil.copy2(f, dest)
+        dest = _place_stem_file(f, audio_folder, used_top)
         all_stems.append({"name": f.stem, "clip_name": f.stem,
                           "category": "reference", "color": REF_TRACK_COLOR,
-                          "file_path": dest, "rel_path": "Audio/" + f.name,
+                          "file_path": dest, "rel_path": "Audio/" + dest.name,
                           "regions": None, "muted": True,
                           "base_start_beat": offsets[0], "extra_clips": []})
         leftover_names.append(f.stem)

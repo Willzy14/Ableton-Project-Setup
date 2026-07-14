@@ -72,7 +72,47 @@ def _wire_native_drop(window):
         traceback.print_exc()
 
 
+def _webview2_installed():
+    """True if the Edge WebView2 runtime is present (Windows only). Without it,
+    pywebview falls back to the ancient MSHTML/IE11 engine, which can't run this
+    UI's modern JS — so we warn instead of opening a broken, blank window."""
+    if sys.platform != "win32":
+        return True
+    import winreg
+    guid = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    # The per-machine 64-bit install lives under WOW6432Node; per-user under the
+    # plain path. Check both, under HKLM and HKCU. (Getting this wrong is worse
+    # than no check — it would falsely block a machine that HAS the runtime.)
+    subkeys = (r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\%s" % guid,
+               r"SOFTWARE\Microsoft\EdgeUpdate\Clients\%s" % guid)
+    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for sk in subkeys:
+            try:
+                with winreg.OpenKey(root, sk, 0, winreg.KEY_READ) as k:
+                    pv, _ = winreg.QueryValueEx(k, "pv")
+                    if pv and pv != "0.0.0.0":
+                        return True
+            except OSError:
+                continue
+    return False
+
+
+def _warn_no_webview2():
+    msg = ("Stem -> Ableton needs the Microsoft Edge WebView2 Runtime, which "
+           "isn't installed on this PC.\n\nInstall it (free) from:\n"
+           "https://developer.microsoft.com/microsoft-edge/webview2/\n\n"
+           "then reopen the app.")
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, msg, "Stem -> Ableton", 0x10)
+    except Exception:  # noqa: BLE001
+        print(msg)
+
+
 def main():
+    if not _webview2_installed():
+        _warn_no_webview2()
+        return
     api = Api()
     window = webview.create_window(
         "Stem → Ableton  ·  Studio Setup",

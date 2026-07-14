@@ -316,6 +316,30 @@
         "Low-priority follow-up: special_dir_kind's ^ref.../new stems? regex could false-divert a nested folder literally named 'Ref Synths'/'New Stems' (now reaches any depth) - tighten if it ever bites.",
         "RF64/WAVE64 (>4GB WAV) support remains deliberately deferred."
       ]
+    },
+    {
+      "date": "2026-07-14",
+      "summary": "Live testing (Sam): 3 of 4 real packs built + opened in Ableton, correct; 172BPM pack auto-detected 172 (previously typed by hand) = win. 1 pack (NM MoveYourBody, 5.96GB zip / 9.4GB, 52 stems ~15.6min 48k/32f Broadcast-WAV) FAILED with a native crash (0xC0000005). PROVED it was NOT the pack (extracted + ran the exact build from CLI -> clean in 37s, BPM 123, 27 tracks) - it's the documented intermittent numpy/BLAS/Dropbox blip; subprocess isolation contained it. First fixes: engine_api._build_in_subprocess AUTO-RETRIES ONCE on a native crash (extracted _run_build_once; native crash tagged _native_crash; NOT retried on a real error/timeout); app.js FAILED card now '(Try again)' re-runs directly instead of resetCard's confusing 'grey box'. THEN a full-team pre-packaging review (Codex thorough NOT-READY; MiniMax CLI was down - Cannot find module resources\\resources\\daemon\\cli.js). Fixed all approved blockers ('fix everything incl. streaming'): (1) copy integrity - the retry could reuse a truncated .wav; ONE _place_stem_file helper now does collision-safe + SIZE-VERIFIED + in-place copies for EVERY copy site (single+multi). (2) temp leak - parent owns the workdir + cleans it even on a worker native crash (was leaking 9.4GB + re-extracting on retry). (3) streaming (root cause) - find_audio_regions + bounce._sum_numpy chunked/streaming instead of whole-file float64 (~1GB/file), proven byte-identical by the harness (window-aligned chunks, same per-sample sum order). (4) multi-version zero-working-stems hard guard (parity with single). (5) updater swap .bat sets PYINSTALLER_RESET_ENVIRONMENT=1 + disk-space preflight. (6) WebView2 preflight in app.py - the harness caught my first detection false-negatively blocking THIS PC (missed WOW6432Node), fixed + verified vs live registry. Validated: harness byte-identical (through several intermittent native-crash retries - same blip even on small fixtures), full suite 26/26, real 9.4GB NM pack re-run BUILD OK + validate PASS. Sam-side before shipping: WebView2 bundling decision + a clean-machine smoke test.",
+      "files_changed": [
+        "Source/project_builder.py",
+        "Source/als_patcher.py",
+        "Source/bounce.py",
+        "Studio App/engine_api.py",
+        "Studio App/build_worker.py",
+        "Studio App/updater.py",
+        "Studio App/app.py",
+        "Studio App/Web/app.js",
+        "Tests/test_deep_nesting.py",
+        "Tests/test_studio_app.py",
+        "Documentation/AI_CONTEXT.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "SAM-SIDE (packaging): decide on WebView2 fixed-runtime bundling in build_exe.py, then a clean-machine smoke test (first run, folder/zip build, failed-worker recovery, updater swap+relaunch, open the .als) BEFORE distributing.",
+        "Optional fast-follow: HTTPS + required (non-empty) SHA-256 for the release feed (Codex nice-to-have).",
+        "RF64/WAVE64 (>4GB WAV) support remains deliberately deferred."
+      ]
     }
   ],
   "decisions": [

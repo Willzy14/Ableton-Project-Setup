@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "Source"))
 from stem_classifier import classify_stems
 from versions import detect_versions, _audio_under, _audio_here
 from project_builder import (build_project, session_report_path,
-                             _copy_stem_dest, _all_source_audio)
+                             _copy_stem_dest, _all_source_audio, _place_stem_file)
 from validate_project import validate_path
 
 SR = 44100
@@ -141,6 +141,28 @@ def test_collision_safe_dest_disambiguates_different_sources():
     assert d2.name != d1.name, (d1.name, d2.name)   # no silent overwrite
     # same source again -> same dest (rebuild into an existing folder)
     assert _copy_stem_dest(f1, audio, used).name == "Loop.wav"
+
+
+def test_place_stem_file_recopies_truncated():
+    # A partial/truncated dest left by a crashed build must be RE-COPIED, not
+    # trusted (Codex pre-package review: the validator only checks a path exists).
+    src_dir = Path(tempfile.mkdtemp())
+    src = src_dir / "Kick.wav"
+    src.write_bytes(b"RIFFfull-content-here-1234567890")
+    audio = Path(tempfile.mkdtemp())
+    (audio / "Kick.wav").write_bytes(b"RIFFtrunc")     # partial from a dead build
+    dest = _place_stem_file(src, audio, {})
+    assert dest.read_bytes() == src.read_bytes(), "truncated dest was not re-copied"
+
+
+def test_place_stem_file_in_place():
+    # A file already sitting in the Audio folder (a pre-seeded ref) is used in
+    # place, never copied onto itself.
+    audio = Path(tempfile.mkdtemp())
+    f = audio / "Master.wav"
+    f.write_bytes(b"RIFFmaster")
+    dest = _place_stem_file(f, audio, {})
+    assert dest == f and dest.read_bytes() == b"RIFFmaster"
 
 
 def test_collision_many_same_basename_all_distinct():

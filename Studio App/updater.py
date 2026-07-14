@@ -120,6 +120,10 @@ def write_swap_script(new_exe, target_exe, workdir):
         "  timeout /t 1 /nobreak >nul",
         "  goto retry",
         ")",
+        # A PyInstaller one-file EXE must relaunch as a FRESH top-level instance —
+        # without this it can try to reuse the just-replaced app's _MEIPASS temp
+        # environment and misbehave. (PyInstaller common-issues guidance.)
+        "set PYINSTALLER_RESET_ENVIRONMENT=1",
         'start "" "%s"' % target_exe,
         'del "%~f0"',
         "",

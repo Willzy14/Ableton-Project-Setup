@@ -241,6 +241,51 @@ def _find_audio_root(folder):
     return folder                                # 0 / 2+ / special — keep parent
 
 
+def _estimate_pack_bytes(paths):
+    """Best-effort uncompressed byte size of the dropped pack(s): a zip's central
+    directory (no extraction) + any loose/folder audio. Used only for a disk-space
+    preflight; returns 0 if it can't tell (then the preflight is skipped)."""
+    total = 0
+    for p in (Path(x) for x in paths):
+        try:
+            if p.suffix.lower() == ".zip":
+                with zipfile.ZipFile(p) as z:
+                    total += sum(i.file_size for i in z.infolist() if not i.is_dir())
+            elif p.is_dir():
+                total += sum(f.stat().st_size for f in p.rglob("*")
+                             if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS)
+            elif p.is_file():
+                total += p.stat().st_size
+        except Exception:  # noqa: BLE001 — a bad path must not block the build
+            continue
+    return total
+
+
+def _preflight_space(paths, output_base):
+    """Return a human error if there clearly isn't room to build, else None.
+
+    A build extracts the pack (~1x) AND copies stems into the project + prints a
+    flat-ref bounce (~1x more), so it transiently needs roughly 2x the pack size
+    across the temp drive and the output drive. Checked before a big pack fails
+    mid-build with a cryptic disk error. Best-effort: skipped if size is unknown."""
+    need = _estimate_pack_bytes(paths)
+    if need <= 0:
+        return None
+    need_x2 = int(need * 2.2)          # extraction + copies + bounce + headroom
+    for label, where in (("temp", tempfile.gettempdir()), ("output", output_base)):
+        try:
+            free = shutil.disk_usage(where).free
+        except Exception:  # noqa: BLE001
+            continue
+        if free < need_x2:
+            gb = lambda b: "%.1f GB" % (b / 1e9)
+            return ("Not enough free space on the %s drive for this pack: it needs "
+                    "~%s (2x the %s of audio) but only %s is free. Free some space "
+                    "or point the output folder at a bigger drive."
+                    % (label, gb(need_x2), gb(need), gb(free)))
+    return None
+
+
 def _safe_extract(zf, dest):
     """Extract a zip, refusing any member that would land OUTSIDE dest (zip-slip).
 
@@ -545,7 +590,17 @@ class Api:
     def _run_build_once(self, job, st):
         """One isolated build subprocess. Returns the build result, or a failure
         dict — a native crash is tagged `_native_crash` so the caller can retry."""
-        job_file = Path(tempfile.mkdtemp(prefix="studioapp_job_")) / "job.json"
+        space_err = _preflight_space(job.get("paths", []), job.get("output_base", ""))
+        if space_err:
+            return {"ok": False, "error": space_err, "trace": ""}
+        job_dir = Path(tempfile.mkdtemp(prefix="studioapp_job_"))
+        # The PARENT owns the extraction dir and cleans it in `finally` below —
+        # a native crash in the worker skips the worker's own finally, so if the
+        # worker extracted to its own tempdir a big pack (e.g. 9.4GB) would leak,
+        # and the auto-retry would extract it AGAIN. Handing the worker a dir we
+        # clean makes the crash cost nothing on disk.
+        job = {**job, "workdir": str(job_dir / "work")}
+        job_file = job_dir / "job.json"
         job_file.write_text(json.dumps(job), encoding="utf-8")
         if getattr(sys, "frozen", False):
             # Packaged: the EXE re-runs itself headless (app.py intercepts

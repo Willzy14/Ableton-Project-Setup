@@ -338,14 +338,32 @@ def find_audio_regions(wav_path, headroom_db=55, window_sec=0.1,
     rms_values = None
     true_peak_db = -120.0
 
-    # Fast path: read all samples and compute per-window RMS in numpy.
-    if _np is not None:
+    # Fast path: numpy per-window RMS, read in bounded CHUNKS so a long/high-res
+    # stem (a 15-min 48k/32f Broadcast WAV is ~360MB) never loads whole then
+    # doubles to float64 (~1GB) at once — the memory pressure behind the
+    # intermittent native crash on huge packs. Each chunk is a whole number of
+    # RMS windows, so the windowing (and therefore every value) is IDENTICAL to a
+    # single whole-file pass; the true peak is an order-independent max of chunk
+    # peaks. Proven byte-identical by Scripts/m1_refactor_harness.py.
+    if _np is not None and window_frames > 0 and frame_bytes > 0:
         try:
+            win_bytes = window_frames * frame_bytes
+            chunk_bytes = max(1, (8 << 20) // win_bytes) * win_bytes   # ~8MB, window-aligned
+            rms_values = []
+            true_peak_db = -120.0
+            remaining = n_frames * frame_bytes
             with open(str(wav_path), "rb") as f:
                 f.seek(hdr["data_offset"])
-                raw_all = f.read(n_frames * frame_bytes)
-            rms_values, true_peak_db = _rms_windows_np(
-                raw_all, n_ch, bps, is_float, window_frames)
+                while remaining > 0:
+                    block = f.read(min(chunk_bytes, remaining))
+                    if not block:
+                        break
+                    remaining -= len(block)
+                    rv, pk = _rms_windows_np(
+                        block, n_ch, bps, is_float, window_frames)
+                    rms_values.extend(rv)
+                    if pk > true_peak_db:
+                        true_peak_db = pk
         except Exception:  # noqa: BLE001 — fall back to the stdlib loop
             rms_values = None
 

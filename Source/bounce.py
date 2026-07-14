@@ -50,16 +50,12 @@ def _write_float_wav_header(f, n_frames, sample_rate, channels=2):
 # --------------------------------------------------------------------------
 # numpy fast path
 # --------------------------------------------------------------------------
-def _read_stem_np(path, hdr):
-    """Read a whole stem as a float32 (frames, 2) numpy array."""
-    n = hdr["n_frames"] * hdr["channels"] * hdr["bps"]
-    with open(str(path), "rb") as f:
-        f.seek(hdr["data_offset"])
-        raw = f.read(n)
+def _decode_stereo_np(raw, hdr):
+    """Decode raw PCM/float bytes -> (frames, 2) float32. A partial trailing frame
+    is dropped (never mis-summed). Shared by the streaming summer."""
     bps = hdr["bps"]
     n_ch = hdr["channels"]
     is_float = hdr["fmt"] == 3
-
     if is_float and bps == 4:
         a = _np.frombuffer(raw, dtype="<f4").astype(_np.float32)
     elif bps == 2:
@@ -75,7 +71,6 @@ def _read_stem_np(path, hdr):
         a = v.astype(_np.float32) / 8388608.0
     else:
         return _np.zeros((0, 2), dtype=_np.float32)
-
     fr = a.size // n_ch
     a = a[:fr * n_ch].reshape(fr, n_ch)
     if n_ch == 1:
@@ -86,17 +81,47 @@ def _read_stem_np(path, hdr):
 
 
 def _sum_numpy(included, sr0, n_frames_out, output_path):
-    acc = _np.zeros((n_frames_out, 2), dtype=_np.float32)
-    for p, hdr in included:
-        a = _read_stem_np(p, hdr)
-        fr = a.shape[0]
-        if fr:
-            acc[:fr] += a
-    peak = float(_np.abs(acc).max()) if acc.size else 0.0
-    with open(str(output_path), "wb") as out:
-        _write_float_wav_header(out, n_frames_out, sr0, channels=2)
-        out.write(acc.reshape(-1).astype("<f4").tobytes())
-    return peak
+    """Sum stems -> one float32 stereo WAV, STREAMING in frame chunks so neither a
+    full-session accumulator nor a whole stem is ever held at once (a 15-min 48k
+    stem is ~360MB EACH — the memory pressure behind the intermittent native crash
+    on huge packs). Bit-identical to a whole-file sum: each output sample is still
+    stem1+stem2+…+stemN in the same order, and chunk boundaries don't reorder the
+    addition; the output bytes and peak are unchanged (proven by the harness)."""
+    CHUNK = 1 << 20                                   # frames/chunk (~8MB stereo f32)
+    peak = 0.0
+    handles = []
+    try:
+        for p, hdr in included:
+            fh = open(str(p), "rb")
+            fh.seek(hdr["data_offset"])
+            handles.append((fh, hdr, hdr["n_frames"]))
+        with open(str(output_path), "wb") as out:
+            _write_float_wav_header(out, n_frames_out, sr0, channels=2)
+            done = 0
+            while done < n_frames_out:
+                this = min(CHUNK, n_frames_out - done)
+                acc = _np.zeros((this, 2), dtype=_np.float32)
+                for fh, hdr, nfr in handles:
+                    if done >= nfr:
+                        continue
+                    take = min(this, nfr - done)
+                    raw = fh.read(take * hdr["channels"] * hdr["bps"])
+                    a = _decode_stereo_np(raw, hdr)
+                    fr = a.shape[0]
+                    if fr:
+                        acc[:fr] += a
+                cp = float(_np.abs(acc).max()) if acc.size else 0.0
+                if cp > peak:
+                    peak = cp
+                out.write(acc.reshape(-1).astype("<f4").tobytes())
+                done += this
+        return peak
+    finally:
+        for fh, _h, _n in handles:
+            try:
+                fh.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # --------------------------------------------------------------------------

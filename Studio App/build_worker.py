@@ -24,7 +24,14 @@ def run_job(job):
     import engine_api as E
     import tempfile
 
-    tmp = Path(tempfile.mkdtemp(prefix="studioapp_"))
+    # Extract into the PARENT-owned workdir when given one: a native crash here
+    # skips this function's `finally`, so a self-made tempdir would leak the whole
+    # extraction (a big pack = GBs) and the auto-retry would re-extract it. The
+    # parent cleans its workdir regardless. Fall back to a tempdir for a direct
+    # (non-Studio-App) invocation.
+    owns_tmp = not job.get("workdir")
+    tmp = Path(job["workdir"]) if job.get("workdir") else Path(tempfile.mkdtemp(prefix="studioapp_"))
+    tmp.mkdir(parents=True, exist_ok=True)
     try:
         print("Preparing stems...", flush=True)
         stem_folder = E.prepare_stem_folder(job["paths"], tmp / "stems")
@@ -62,8 +69,10 @@ def run_job(job):
     except Exception as exc:  # noqa: BLE001 — one bad pack must not kill the batch
         return {"ok": False, "error": str(exc), "trace": traceback.format_exc()}
     finally:
-        import shutil
-        if tmp.exists():
+        # Only clean a tempdir WE made; a parent-owned workdir is the parent's to
+        # remove (it does so even if this process crashes before reaching here).
+        if owns_tmp and tmp.exists():
+            import shutil
             shutil.rmtree(tmp, ignore_errors=True)
 
 
