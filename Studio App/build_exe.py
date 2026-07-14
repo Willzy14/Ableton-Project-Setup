@@ -133,6 +133,9 @@ def main():
         "--paths", str(SOURCE_DIR),
         "--paths", str(APP_DIR),
     ]
+    app_icon = REPO_DIR / "Assets" / "AppIcon.ico"   # WM monogram + Ableton clips
+    if app_icon.exists():
+        args += ["--icon", str(app_icon)]
     for src, dest in datas:
         if Path(src).exists():
             args += ["--add-data", str(src) + SEP + dest]
