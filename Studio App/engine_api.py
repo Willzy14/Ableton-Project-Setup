@@ -370,23 +370,20 @@ class Api:
     def update_app(self):
         """Check for a newer version.
 
-        Packaged EXE: query the public `latest.json` feed (configurable in
-        update_feed.json). If a newer version is out, return its details so the
-        UI can confirm before apply_update() swaps the EXE. Running from source:
-        fall back to `git pull` (Dropbox usually syncs it already anyway).
+        Packaged EXE: query the PRIVATE releases repo via the baked read-only token
+        (see updater.py). If a newer version is out, return its details so the UI
+        can confirm before apply_update() swaps the EXE. Running from source: fall
+        back to `git pull` (Dropbox usually syncs it already anyway).
         """
         import updater
         if updater.is_frozen():
-            if not updater.feed_url():
-                return {"ok": False, "error": "Update feed not set up yet "
-                        "(no URL in update_feed.json)."}
             info = updater.check_for_update(get_version())
             if not info.get("ok"):
-                return info
+                return info   # "no repo/token configured", network error, etc.
             if not info.get("available"):
                 return {"ok": True, "changed": False, "version": get_version()}
             return {"ok": True, "changed": True, "needsApply": True,
-                    "latest": info["latest"], "download_url": info["download_url"],
+                    "latest": info["latest"], "asset_url": info["asset_url"],
                     "notes": info.get("notes", ""), "version": get_version()}
 
         if not (REPO_DIR / ".git").exists():
@@ -402,16 +399,16 @@ class Api:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
 
-    def apply_update(self, download_url):
+    def apply_update(self, asset_url):
         """Download the new EXE, spawn the detached swap script, then quit so it
         can replace and relaunch us. Only meaningful in the packaged app.
         """
         import updater
-        # Re-read the feed for the authoritative sha256 (don't trust a value
+        # Re-read the release for the authoritative sha256 (don't trust a value
         # round-tripped through the UI) and verify the download against it.
         info = updater.check_for_update(get_version())
         expected_sha = info.get("sha256", "") if info.get("ok") else ""
-        res = updater.apply_update(download_url, expected_sha)
+        res = updater.apply_update(asset_url, expected_sha)
         if res.get("ok") and res.get("relaunching"):
             def _quit():
                 try:

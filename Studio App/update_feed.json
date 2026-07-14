@@ -1,5 +1,5 @@
 {
-  "_comment": "Public releases feed for the Studio App self-updater. Set feed_url to the raw URL of your published latest.json (e.g. a public GitHub repo's raw file, or a GitHub Release asset). release_base is the public folder the EXE is hosted in; publish_release.py uses it to fill latest.json's download_url. The source repo stays private; this feed + the EXE are public so no token is baked into the build. Until feed_url is set, the in-app Update button reports 'no feed configured' (packaged) or falls back to git pull (running from source). This file can also be dropped NEXT TO the distributed EXE to set the URL without a rebuild.",
-  "feed_url": "",
-  "release_base": ""
+  "_comment": "Private auto-update config for the Studio App. 'repo' is the PRIVATE GitHub repo (owner/name) whose Releases hold the built EXE. 'token' is a fine-grained, READ-ONLY (Contents: Read) Personal Access Token scoped to ONLY that repo — it is left EMPTY here (never committed) and injected at build time by build_exe.py from the env var STEMTOABLETON_RELEASE_TOKEN or the local untracked file Studio App/release_token.local. Publishing is done with the `gh` CLI (Sam's own login); no publish token is baked in. This file can also be dropped NEXT TO the distributed EXE to repoint/rotate without a rebuild.",
+  "repo": "Willzy14/StemToAbleton-Releases",
+  "token": ""
 }

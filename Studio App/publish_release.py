@@ -1,17 +1,22 @@
-"""Stamp a release: bump VERSION and write latest.json for the public feed.
+"""Version-bump + publish a release to the PRIVATE releases repo via `gh`.
 
-    py -3.13 "Studio App/publish_release.py" --bump patch  --notes "What changed"
-    py -3.13 "Studio App/publish_release.py" --set 0.2.0   --notes "..."
+    # 1. Bump the version (edits VERSION only):
+    py -3.13 "Studio App/publish_release.py" --bump patch
+    # 2. Build the EXE (bakes the bumped VERSION + the read-only token):
+    py -3.13 "Studio App/build_exe.py"
+    # 3. Publish: cut a GitHub Release on the PRIVATE repo + upload the EXE:
+    py -3.13 "Studio App/publish_release.py" --publish --notes "What changed"
 
-Writes Studio App/dist/latest.json describing the build. The download_url is
-taken from --url, else from the `release_base` in update_feed.json (the public
-folder/repo the EXE is hosted in), else left as a TODO placeholder. Publishing
-itself (uploading StemToAbleton.exe + latest.json to the public feed) stays a
-manual/your-call step — this script just prepares the metadata. The code repo
-stays PRIVATE; only the EXE + latest.json go to the public feed.
+The EXE + a sha256 go to the private repo's Releases; the app self-updates from
+there using its baked read-only token (see updater.py). Publishing uses the `gh`
+CLI with Sam's own GitHub login — no token is baked for publishing. The source
+repo stays private; the release repo is ALSO private (the tool must not be
+publicly downloadable).
 """
 import argparse
+import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,74 +43,87 @@ def _bump(version, part):
     return ".".join(str(n) for n in nums)
 
 
-def _release_base():
+def _repo():
     try:
         return (json.loads(FEED_CONFIG.read_text(encoding="utf-8"))
-                .get("release_base") or "").strip().rstrip("/")
+                .get("repo") or "").strip()
     except Exception:  # noqa: BLE001
         return ""
 
 
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _publish(notes):
+    """Cut a GitHub Release on the private repo (tag = current VERSION) and upload
+    the built EXE + its sha256, via `gh`. Returns an exit code."""
+    repo = _repo()
+    if not repo:
+        print("REFUSED: no 'repo' set in update_feed.json.")
+        return 2
+    exe = DIST / EXE_NAME
+    if not exe.exists():
+        print("REFUSED: no built EXE at " + str(exe) + " — run build_exe.py first.")
+        return 2
+    if subprocess.run(["gh", "--version"], capture_output=True).returncode != 0:
+        print("REFUSED: the GitHub CLI `gh` isn't available/logged in. "
+              "Install it + `gh auth login`, then retry.")
+        return 2
+    version = _read_version()
+    tag = version if version.startswith("v") else "v" + version
+    sha = _sha256(exe)
+    body = "sha256: " + sha + ("\n\n" + notes if notes else "")
+    cmd = ["gh", "release", "create", tag, str(exe),
+           "--repo", repo, "--title", "v" + version.lstrip("v"),
+           "--notes", body]
+    print("Publishing v%s to PRIVATE repo %s ..." % (version, repo))
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print("gh release create FAILED:\n" + (res.stderr or res.stdout))
+        return 1
+    print("Released: " + (res.stdout.strip() or tag))
+    print("sha256:   " + sha)
+    print("The packaged app will now see v%s at %s and self-update." % (version, repo))
+    return 0
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Prepare a Studio App release.")
+    ap = argparse.ArgumentParser(description="Bump + publish a Studio App release.")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--bump", choices=["major", "minor", "patch"])
     g.add_argument("--set", dest="set_version")
+    ap.add_argument("--publish", action="store_true",
+                    help="cut a GitHub Release on the private repo + upload the EXE")
     ap.add_argument("--notes", default="")
-    ap.add_argument("--url", default="", help="explicit download URL for the EXE")
     args = ap.parse_args(argv)
 
-    current = _read_version()
-    if args.set_version:
-        new = args.set_version
-    elif args.bump:
-        new = _bump(current, args.bump)
-    else:
-        new = current
-    # Guard the self-update loop: --bump changes VERSION, but the EXE bakes in
-    # its VERSION at BUILD time. Bumping here AND writing latest.json/download in
-    # the same call would advertise a version newer than any built EXE. Bump
-    # BEFORE building; stamp latest.json (with --url) AFTER, without --bump.
-    if (args.bump or args.set_version) and args.url:
-        print("REFUSED: don't bump the version AND stamp a download URL in one "
-              "call — the EXE would be older than latest.json (update loop). "
-              "Bump first, build the EXE, THEN run again with --url only.")
+    # Guard the self-update loop: --bump changes VERSION, but the EXE bakes its
+    # VERSION at BUILD time. Bump BEFORE building; publish (at the current VERSION)
+    # AFTER. Doing both in one call would tag a release newer than any built EXE.
+    if (args.bump or args.set_version) and args.publish:
+        print("REFUSED: don't bump AND publish in one call — the release would be "
+              "newer than the built EXE (update loop). Bump first, build, THEN "
+              "run again with --publish only.")
         return 2
-    VERSION_FILE.write_text(new + "\n", encoding="utf-8")
 
-    base = _release_base()
-    download_url = args.url or ((base + "/" + EXE_NAME) if base else
-                                "TODO-set-release_base-in-update_feed.json")
+    if args.bump or args.set_version:
+        current = _read_version()
+        new = args.set_version or _bump(current, args.bump)
+        VERSION_FILE.write_text(new + "\n", encoding="utf-8")
+        print("VERSION: %s -> %s" % (current, new))
+        print("Next: build the EXE (build_exe.py), then --publish.")
+        return 0
 
-    DIST.mkdir(parents=True, exist_ok=True)
-    # Checksum the built EXE so the app can verify the download before swapping.
-    # Only present once the EXE exists (the --url stamp runs AFTER the build).
-    sha256 = ""
-    exe_path = DIST / EXE_NAME
-    if exe_path.exists():
-        import hashlib
-        h = hashlib.sha256()
-        with open(exe_path, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                h.update(chunk)
-        sha256 = h.hexdigest()
-    latest = {"version": new, "download_url": download_url,
-              "sha256": sha256, "notes": args.notes}
-    (DIST / "latest.json").write_text(json.dumps(latest, indent=2) + "\n",
-                                      encoding="utf-8")
-    if not sha256:
-        print("NOTE: no EXE at " + str(exe_path) + " yet, so latest.json has an "
-              "empty sha256 — re-run this (with --url, no --bump) AFTER building "
-              "the EXE so the download is checksum-verified.")
+    if args.publish:
+        return _publish(args.notes)
 
-    print("VERSION: %s -> %s" % (current, new))
-    print("Wrote " + str(DIST / "latest.json") + ":")
-    print(json.dumps(latest, indent=2))
-    print("\nNext steps (manual — the feed is public, the code repo is not):")
-    print("  1. Build the EXE:  py -3.13 \"Studio App/build_exe.py\"")
-    print("  2. Upload dist/" + EXE_NAME + " AND dist/latest.json to the public")
-    print("     releases feed; set feed_url (and release_base) in update_feed.json")
-    print("     to point at that latest.json once, then commit that.")
+    print("Nothing to do. Use --bump/--set to version, or --publish to release.")
+    print("Current VERSION: " + _read_version())
     return 0
 
 

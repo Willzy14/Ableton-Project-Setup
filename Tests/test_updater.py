@@ -1,8 +1,8 @@
-"""Self-updater: version compare, feed read, and swap-script generation.
+"""Self-updater (PRIVATE GitHub-releases model): version compare, config read,
+release parsing, and swap-script generation.
 
-Pure-function coverage (no real EXE / network) — check_for_update reads a local
-file:// latest.json; the swap script is checked for content. The actual EXE swap
-+ relaunch is a frozen-only path Sam verifies on a real build.
+Pure-function + mocked-API coverage (no real EXE / network). The GitHub call is
+stubbed; the real EXE swap + relaunch is a frozen-only path Sam verifies on a build.
 """
 import sys
 import json
@@ -15,11 +15,21 @@ sys.path.insert(0, str(APP_DIR))
 import updater
 
 
-def _feed(tmp, version, url="https://example.com/StemToAbleton.exe", notes="x"):
-    p = Path(tmp) / "latest.json"
-    p.write_text(json.dumps({"version": version, "download_url": url,
-                             "notes": notes}), encoding="utf-8")
-    return p.as_uri()
+class _FakeResp:
+    def __init__(self, obj):
+        self._d = json.dumps(obj).encode("utf-8")
+    def read(self):
+        return self._d
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
+
+def _with_config(repo="Willzy14/StemToAbleton-Releases", token="github_pat_x"):
+    tmp = Path(tempfile.mkdtemp()) / "update_feed.json"
+    tmp.write_text(json.dumps({"repo": repo, "token": token}), encoding="utf-8")
+    updater.FEED_CONFIG = tmp
 
 
 def test_semver_compare():
@@ -28,62 +38,64 @@ def test_semver_compare():
     assert updater._semver("0.1.0") < updater._semver("0.10.0")
 
 
-def test_check_for_update_sees_newer():
-    tmp = tempfile.mkdtemp()
-    uri = _feed(tmp, "0.2.0")
-    r = updater.check_for_update("0.1.0", url=uri)
+def test_config_reads_repo_and_token():
+    _with_config("owner/rel", "github_pat_abc")
+    cfg = updater._config()
+    assert cfg["repo"] == "owner/rel" and cfg["token"] == "github_pat_abc"
+
+
+def test_check_no_repo_configured():
+    tmp = Path(tempfile.mkdtemp()) / "update_feed.json"
+    tmp.write_text(json.dumps({"repo": "", "token": ""}), encoding="utf-8")
+    updater.FEED_CONFIG = tmp
+    r = updater.check_for_update("0.1.0")
+    assert not r["ok"] and "repo" in r["error"].lower()
+
+
+def test_check_parses_latest_release(monkeypatched=None):
+    _with_config()
+    release = {
+        "tag_name": "0.3.0",
+        "body": "Fixes\nsha256: " + ("a" * 64),
+        "assets": [
+            {"name": "notes.txt", "url": "https://api.github.com/.../assets/1"},
+            {"name": "StemToAbleton.exe", "url": "https://api.github.com/x/assets/9"},
+        ],
+    }
+    orig = updater._api_get
+    try:
+        updater._api_get = lambda url, token, **kw: _FakeResp(release)
+        r = updater.check_for_update("0.2.0")
+    finally:
+        updater._api_get = orig
     assert r["ok"] and r["available"]
-    assert r["latest"] == "0.2.0"
-    assert r["download_url"].endswith("StemToAbleton.exe")
+    assert r["latest"] == "0.3.0"
+    assert r["asset_url"].endswith("/assets/9")     # picked the .exe asset
+    assert r["sha256"] == "a" * 64                  # parsed from the body
 
 
-def test_check_for_update_already_current():
-    tmp = tempfile.mkdtemp()
-    uri = _feed(tmp, "0.1.0")
-    r = updater.check_for_update("0.1.0", url=uri)
+def test_check_not_newer():
+    _with_config()
+    orig = updater._api_get
+    try:
+        updater._api_get = lambda url, token, **kw: _FakeResp(
+            {"tag_name": "0.1.0", "assets": []})
+        r = updater.check_for_update("0.1.0")
+    finally:
+        updater._api_get = orig
     assert r["ok"] and not r["available"]
 
 
-def test_check_for_update_no_url():
-    r = updater.check_for_update("0.1.0", url="")
-    assert not r["ok"] and "configured" in r["error"]
-
-
-def test_check_for_update_unreachable():
-    r = updater.check_for_update("0.1.0", url="file:///definitely/not/here.json")
-    assert not r["ok"] and "feed" in r["error"].lower()
-
-
-def test_swap_script_retries_then_relaunches():
+def test_swap_script_retries_relaunches_resets_env():
     tmp = Path(tempfile.mkdtemp())
     bat = updater.write_swap_script(tmp / "new.exe", tmp / "app.exe", tmp)
     raw = bat.read_bytes()
     assert b"\r\n" in raw and b"\r\r\n" not in raw   # clean CRLF for cmd.exe
     text = raw.decode("utf-8")
-    assert ":retry" in text
+    assert ":retry" in text and "goto retry" in text
     assert "move /y" in text and "new.exe" in text and "app.exe" in text
-    assert "goto retry" in text                 # waits for the lock to clear
-    assert 'start "" ' in text                  # relaunches
-    assert "del " in text                       # cleans itself up
-
-
-def test_feed_url_reads_bundled_config_when_set():
-    # Point the module's bundled config at a temp file with a URL set.
-    tmp = Path(tempfile.mkdtemp())
-    cfg = tmp / "update_feed.json"
-    cfg.write_text(json.dumps({"feed_url": "https://feed.example/latest.json"}),
-                   encoding="utf-8")
-    orig = updater.FEED_CONFIG
-    try:
-        updater.FEED_CONFIG = cfg
-        assert updater.feed_url() == "https://feed.example/latest.json"
-    finally:
-        updater.FEED_CONFIG = orig
-
-
-def test_feed_url_empty_when_placeholder():
-    # The committed placeholder has an empty feed_url -> not configured.
-    assert updater.feed_url() == ""
+    assert "PYINSTALLER_RESET_ENVIRONMENT=1" in text  # one-file fresh relaunch
+    assert 'start "" ' in text and "del " in text
 
 
 if __name__ == "__main__":

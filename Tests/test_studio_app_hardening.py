@@ -31,14 +31,27 @@ def test_safe_extract_blocks_zip_slip():
 
 
 def test_check_for_update_surfaces_sha256():
-    with tempfile.TemporaryDirectory() as tmp:
-        feed = Path(tmp) / "latest.json"
-        feed.write_text(json.dumps({
-            "version": "9.9.9", "download_url": "http://x/app.exe",
-            "sha256": "ABC123"}))
-        info = updater.check_for_update("0.1.0", url=feed.as_uri())
-        assert info["ok"] and info["available"]
-        assert info["sha256"] == "abc123"                    # normalised lowercase
+    # Private-repo model: sha256 is parsed from the release BODY + lowercased.
+    cfg = Path(tempfile.mkdtemp()) / "update_feed.json"
+    cfg.write_text(json.dumps({"repo": "o/r", "token": "github_pat_x"}), encoding="utf-8")
+    updater.FEED_CONFIG = cfg
+    sha = "AB" * 32                                           # 64 hex, upper-case
+    release = {"tag_name": "9.9.9", "body": "notes\nSHA256: " + sha,
+               "assets": [{"name": "StemToAbleton.exe", "url": "http://x/assets/1"}]}
+
+    class _R:
+        def __init__(s, o): s._d = json.dumps(o).encode()
+        def read(s): return s._d
+        def __enter__(s): return s
+        def __exit__(s, *a): return False
+    orig = updater._api_get
+    try:
+        updater._api_get = lambda url, token, **kw: _R(release)
+        info = updater.check_for_update("0.1.0")
+    finally:
+        updater._api_get = orig
+    assert info["ok"] and info["available"]
+    assert info["sha256"] == sha.lower()                     # normalised lowercase
 
 
 def test_sha256_helper_matches_hashlib():

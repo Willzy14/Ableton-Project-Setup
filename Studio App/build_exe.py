@@ -17,6 +17,7 @@ RELEASE ORDER (important — the EXE bakes in the current VERSION at build time)
      current VERSION — do NOT --bump here, or latest.json would advertise a
      version newer than the EXE and the app would self-update in a loop).
 """
+import json
 import os
 import shutil
 import sys
@@ -33,6 +34,58 @@ from project_builder import get_template_path  # noqa: E402
 NAME = "StemToAbleton"
 SEP = ";"  # Windows --add-data separator (src;dest)
 
+# Local, gitignored build inputs (never committed):
+RELEASE_TOKEN_FILE = APP_DIR / "release_token.local"   # the fine-grained read-only PAT
+WEBVIEW2_DIR = APP_DIR / "webview2_runtime"            # extracted WebView2 Fixed Version runtime
+
+
+def _release_token():
+    """The private-repo READ-ONLY PAT to bake in, from env or the local file.
+    Never comes from git — the committed update_feed.json leaves token empty."""
+    tok = (os.environ.get("STEMTOABLETON_RELEASE_TOKEN") or "").strip()
+    if tok:
+        return tok
+    if RELEASE_TOKEN_FILE.exists():
+        return RELEASE_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _baked_feed(work):
+    """Write update_feed.json with the release token filled in (repo comes from the
+    committed file), for bundling. The token is injected here at build time only."""
+    cfg = json.loads((APP_DIR / "update_feed.json").read_text(encoding="utf-8"))
+    cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    cfg["token"] = _release_token()
+    out = work / "update_feed.json"
+    out.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    if not cfg["token"]:
+        print("WARNING: no release token (STEMTOABLETON_RELEASE_TOKEN or "
+              + RELEASE_TOKEN_FILE.name + ") — the built EXE won't be able to "
+              "auto-update. Add the read-only PAT and rebuild to enable updates.")
+    else:
+        print("Release token baked in (auto-update from the private repo enabled).")
+    return out
+
+
+def _webview2_data():
+    """If the WebView2 Fixed Version runtime is present locally, return (root, dest)
+    to bundle it at 'webview2/' so the EXE is self-contained on ANY machine. app.py
+    points pywebview at it via WEBVIEW2_BROWSER_EXECUTABLE_FOLDER when frozen."""
+    if not WEBVIEW2_DIR.exists():
+        print("WARNING: no WebView2 runtime at " + str(WEBVIEW2_DIR) + " — the EXE "
+              "will rely on the target machine's own WebView2 (the in-app preflight "
+              "warns + prompts to install if it's missing). To bundle it, extract "
+              "Microsoft's WebView2 Fixed Version runtime there and rebuild.")
+        return None
+    hits = list(WEBVIEW2_DIR.rglob("msedgewebview2.exe"))
+    if not hits:
+        print("WARNING: " + str(WEBVIEW2_DIR) + " has no msedgewebview2.exe — "
+              "not a valid runtime folder; skipping the WebView2 bundle.")
+        return None
+    root = hits[0].parent
+    print("Bundling WebView2 Fixed Version runtime from " + str(root))
+    return (root, "webview2")
+
 
 def main():
     template = Path(get_template_path())
@@ -48,13 +101,16 @@ def main():
     datas = [
         (APP_DIR / "Web", "Web"),
         (APP_DIR / "VERSION", "."),
-        (APP_DIR / "update_feed.json", "."),
+        (_baked_feed(work), "."),               # update_feed.json WITH the token baked in
         (bundled_template, "."),
         (REPO_DIR / "Assets" / "AProject.ico", "."),   # Ableton folder icon
         # NB: the machine-specific Config/project_builder.json is NOT bundled —
         # it holds absolute paths; the frozen app resolves template from the
         # bundle and settings/output from %APPDATA% instead.
     ]
+    wv2 = _webview2_data()                       # bundle WebView2 runtime if present
+    if wv2:
+        datas.append(wv2)
 
     args = [
         str(APP_DIR / "app.py"),

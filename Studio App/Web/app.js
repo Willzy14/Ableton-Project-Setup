@@ -218,7 +218,7 @@ async function checkForUpdate() {
         + (r.notes ? "\n\n" + r.notes : "") + "\n\nDownload and install now? The app will relaunch.";
       if (confirm(msg)) {
         btn.textContent = "⟳ Installing…";
-        const ar = await a.apply_update(r.download_url);
+        const ar = await a.apply_update(r.asset_url);
         if (!ar.ok) toast("Install failed: " + (ar.error || "unknown"), "bad");
         else toast("Installing v" + r.latest + " — the app will close and reopen.", "good");
       }

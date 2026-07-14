@@ -110,7 +110,15 @@ def _warn_no_webview2():
 
 
 def main():
-    if not _webview2_installed():
+    # A BUNDLED WebView2 Fixed Version runtime (self-contained EXE) wins: point
+    # pywebview at it so the app renders even on a machine with no system WebView2.
+    # Only fall back to the machine's own runtime + the install prompt when there's
+    # no bundle.
+    bundled_wv2 = _BASE / "webview2"
+    if getattr(sys, "frozen", False) and (bundled_wv2 / "msedgewebview2.exe").exists():
+        import os
+        os.environ["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = str(bundled_wv2)
+    elif not _webview2_installed():
         _warn_no_webview2()
         return
     api = Api()

@@ -7,3 +7,13 @@ Config/settings.json
 build/
 dist/
 *.spec
+
+# SECRET — the private-repo read-only PAT baked into the EXE at build time.
+# NEVER commit this. build_exe.py reads it (or the env var STEMTOABLETON_RELEASE_TOKEN)
+# and injects it into the bundled update_feed.json; the committed update_feed.json
+# keeps token empty.
+release_token.local
+
+# WebView2 Fixed Version runtime (~150MB) extracted here for bundling — a large
+# binary redistributable, not source; fetched locally per build machine.
+webview2_runtime/
