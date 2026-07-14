@@ -120,10 +120,12 @@ html, body {
 }
 .brand { display: flex; align-items: center; gap: 14px; }
 .brand-mark {
+  /* The app-icon tile: teal WM monogram on a dark rounded square — matches the
+     EXE/taskbar icon 1:1 so the app reads as one identity. */
   width: 40px; height: 40px; flex: 0 0 auto;
-  object-fit: contain; border-radius: 50%;
-  border: 1.5px solid rgba(46,230,214,0.55);
-  box-shadow: 0 0 18px rgba(46,230,214,0.28) inset, 0 0 14px rgba(46,230,214,0.18);
+  object-fit: contain; border-radius: var(--radius-sm);
+  border: 1px solid var(--stroke-cyan);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 12px rgba(46,230,214,0.16);
 }
 .brand-text { display: flex; flex-direction: column; gap: 4px; }
 .brand-title { font-size: 19px; font-weight: 600; letter-spacing: 0.2px; display: flex; align-items: baseline; gap: 6px; }
