@@ -524,13 +524,27 @@ class Api:
     BUILD_TIMEOUT_SEC = 1800
 
     def _build_in_subprocess(self, job, st):
-        """Run one build in an ISOLATED process (build_worker.py).
+        """Run one build in an ISOLATED process, auto-retrying ONCE on a native
+        crash.
 
-        A native crash (access violation in numpy/BLAS, a Dropbox blip mid-read
-        — seen intermittently in battle testing) then costs ONE project instead
-        of killing the whole app and batch. Streams the engine's progress lines
-        into the card while it works.
+        A native crash (access violation in numpy/BLAS, a Dropbox blip mid-read —
+        seen intermittently in battle testing) is transient: a clean re-run almost
+        always succeeds (confirmed on the real packs that hit it). So it costs ONE
+        project, and we quietly try a second time before surfacing a failure. A
+        real build ERROR or a TIMEOUT is NOT retried (it would just fail/stall
+        again). Streams the engine's progress lines into the card while it works.
         """
+        for attempt in (1, 2):
+            res = self._run_build_once(job, st)
+            if not res.pop("_native_crash", False):
+                return res
+            if attempt == 1:
+                st["message"] = "Hit a transient error — retrying once…"
+        return res    # crashed both times: report the crash
+
+    def _run_build_once(self, job, st):
+        """One isolated build subprocess. Returns the build result, or a failure
+        dict — a native crash is tagged `_native_crash` so the caller can retry."""
         job_file = Path(tempfile.mkdtemp(prefix="studioapp_job_")) / "job.json"
         job_file.write_text(json.dumps(job), encoding="utf-8")
         if getattr(sys, "frozen", False):
@@ -583,11 +597,14 @@ class Api:
             why = ("Build timed out after " + str(self.BUILD_TIMEOUT_SEC // 60)
                    + " min — this pack took too long. The rest of the batch "
                    "continues; try this pack again or check it isn't enormous.")
-        else:
-            why = ("The build engine crashed on this pack (native error, exit "
-                   + str(proc.returncode) + "). The rest of the batch continues — "
-                   "try this pack again.")
-        return {"ok": False, "error": why, "trace": "\n".join(tail[-40:])}
+            return {"ok": False, "error": why, "trace": "\n".join(tail[-40:])}
+        # Native crash — intermittent (numpy/BLAS/Dropbox blip). Tag it so the
+        # caller retries once; this message only surfaces if the retry ALSO died.
+        why = ("The build engine crashed on this pack twice (native error, exit "
+               + str(proc.returncode) + ") — this is an intermittent glitch, not "
+               "the pack. The rest of the batch continues; try this pack again.")
+        return {"ok": False, "error": why, "trace": "\n".join(tail[-40:]),
+                "_native_crash": True}
 
     def _build_inline(self, job, st):
         """Fallback: build in-process (old behaviour, no crash isolation)."""

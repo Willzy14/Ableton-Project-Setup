@@ -166,6 +166,48 @@ def test_build_worker_subprocess_contract():
     assert Path(res["als"]).exists()
 
 
+def test_native_crash_auto_retries_once():
+    # A native crash (0xC0000005 — intermittent numpy/BLAS/Dropbox blip) is
+    # retried once automatically; a clean re-run then succeeds and the user never
+    # sees a failure. A real build error / timeout is NOT retried.
+    api = ea.Api()
+    st = {}
+
+    def fake(seq):
+        calls = {"n": 0}
+        def _run(job, s):
+            r = seq[min(calls["n"], len(seq) - 1)]
+            calls["n"] += 1
+            return dict(r)
+        _run.calls = calls
+        return _run
+
+    CRASH = {"ok": False, "error": "boom", "trace": "", "_native_crash": True}
+    OK = {"ok": True, "als": "x.als", "folder": "f"}
+    ERR = {"ok": False, "error": "real build error", "trace": ""}
+
+    # crash then success -> success, ran twice
+    api._run_build_once = fake([CRASH, OK])
+    res = api._build_in_subprocess({}, st)
+    assert res["ok"] is True and api._run_build_once.calls["n"] == 2, res
+
+    # crash twice -> failure, ran twice, sentinel stripped from the surfaced dict
+    api._run_build_once = fake([CRASH, CRASH])
+    res = api._build_in_subprocess({}, st)
+    assert res["ok"] is False and "_native_crash" not in res, res
+    assert api._run_build_once.calls["n"] == 2
+
+    # a REAL build error is NOT retried
+    api._run_build_once = fake([ERR, OK])
+    res = api._build_in_subprocess({}, st)
+    assert res["ok"] is False and api._run_build_once.calls["n"] == 1, res
+
+    # success first time -> no retry
+    api._run_build_once = fake([OK])
+    res = api._build_in_subprocess({}, st)
+    assert res["ok"] is True and api._run_build_once.calls["n"] == 1, res
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

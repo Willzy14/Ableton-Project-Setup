@@ -414,9 +414,16 @@ function actionLights(proj, st) {
   if (finished) {
     const again = document.createElement("button");
     again.className = "btn tiny cb-reset";
-    again.textContent = "↺ Build again";
-    again.title = "Clear this result and re-queue the project";
-    again.onclick = () => resetCard(proj.id);
+    const failed = st.state === "failed";
+    // A FAILED card retries the build directly (one click) — the crash is usually
+    // a transient glitch, so send it straight back through, don't dump the user
+    // into an editable "grey" reset with no obvious build button. A done/warn
+    // card clears its result so you can tweak settings and rebuild.
+    again.textContent = failed ? "↻ Try again" : "↺ Build again";
+    again.title = failed
+      ? "Re-run this build (the last attempt hit a transient error)"
+      : "Clear this result and re-queue the project";
+    again.onclick = failed ? () => runBatch([proj]) : () => resetCard(proj.id);
     wrap.appendChild(again);
   }
   return wrap;
