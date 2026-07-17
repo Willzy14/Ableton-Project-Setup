@@ -366,6 +366,21 @@
         "Triage the batched Snag List (Documentation/Snag List.md) when a batch is worth shipping; SNAG-001 = Extended-mix off-grid (needs a real Extended+Radio project from Sam to repro).",
         "RF64/WAVE64 (>4GB WAV) support remains deliberately deferred."
       ]
+    },
+    {
+      "date": "2026-07-17",
+      "summary": "Logged SNAG-002 from Sam's live use: normal working tracks were unexpectedly routed to External Out in two projects (one affected track, then five), bypassing Main/Master and silently disappearing from final exports. No code change was made; the eventual fix must validate that only dedicated reference/A/B tracks use AudioOut/External.",
+      "files_changed": [
+        "Documentation/Snag List.md",
+        "Documentation/AI_CONTEXT.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Collect the two affected project folders and names of incorrectly routed tracks.",
+        "Fix routing assignment and add a validator hard-fail for any non-reference working track routed to AudioOut/External.",
+        "Batch SNAG-001 and SNAG-002 into a future Studio App update when ready."
+      ]
     }
   ],
   "decisions": [

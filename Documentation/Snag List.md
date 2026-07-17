@@ -10,6 +10,33 @@ Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
 
 ---
 
+## SNAG-002 — Working tracks incorrectly routed to External Out
+- **Status:** 🔴 open
+- **Found:** 2026-07-17 — occurred across two real projects in studio use (Sam).
+- **Severity:** High. The project appears normal during setup, but affected tracks bypass
+  the Main/Master channel and are silently missing from the final exported master.
+- **Setup:** Two separate projects built by the shipped Studio App. One project had one
+  affected track; another had five affected tracks.
+- **Symptom:** Some normal working tracks are unexpectedly routed to **External Out**
+  instead of their group or the Main channel. This is difficult to spot before export:
+  the problem may only become apparent after bouncing, when those tracks are absent from
+  the final master.
+- **Expected:** Only dedicated reference/A/B tracks should use External Out. Every working
+  stem must route through its assigned group or directly through Main.
+- **Hypothesis (unconfirmed):** A cloned/template track may sometimes retain the routing
+  intended for a reference track, or some working stems may be incorrectly processed as
+  references during track creation.
+- **Info to gather before fixing:**
+  - The two affected project folders and names of the incorrectly routed tracks.
+  - Whether the affected tracks share a category, group, source folder, or naming pattern.
+  - Whether they are ordinary working stems, updated stems, or version-shared tracks.
+- **Likely fix location:** routing assignment in `Source/als_patcher.py`, especially
+  `set_track_output_external` and inserted-track routing. Add validation in
+  `Source/validate_project.py` that fails when any non-reference working track is routed
+  to `AudioOut/External`.
+
+---
+
 ## SNAG-001 — Extended mix clip lands slightly off-grid
 - **Status:** 🔴 open
 - **Found:** 2026-07-14 — first real distribution, in-studio (Sam).
