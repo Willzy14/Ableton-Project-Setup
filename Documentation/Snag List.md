@@ -7,11 +7,13 @@ cutting a release per bug. Newest first.
 **Status key:** 🔴 open · 🟡 investigating · 🟢 fixed (note the release, e.g. `fixed v0.1.1`)
 
 Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
+Current release: **v0.1.1** (2026-07-29) — SNAG-001, SNAG-002, SNAG-003 + the
+.rar ingest fix. Click Update in the app to pick it up.
 
 ---
 
 ## SNAG-003 — "Chop" and drum-loop stems misclassified and parked muted
-- **Status:** 🟢 fixed (2026-07-29, not yet released — pending next EXE build)
+- **Status:** 🟢 fixed v0.1.1
 - **Found:** 2026-07-29, in-studio (Sam) — real project **Wyn Starks - COCO (Dave Aude
   Remix)**, built the day before this fix.
 - **Severity:** Medium. Three stems (a vocal chop + two drum loops) silently parked at the
@@ -45,7 +47,7 @@ Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
 ---
 
 ## SNAG-002 — Working tracks incorrectly routed to External Out
-- **Status:** 🟢 fixed (2026-07-29, not yet released — pending next EXE build)
+- **Status:** 🟢 fixed v0.1.1
 - **Root cause (confirmed via the two real affected projects' actual filenames, three
   independent contributors, all fixed):**
   1. `REFERENCE_PATTERNS`' "2MIX" regex matched ANYWHERE in a filename, not just as the
@@ -96,7 +98,7 @@ Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
 ---
 
 ## SNAG-001 — Extended mix clip lands slightly off-grid
-- **Status:** 🟡 mitigated (2026-07-29, not yet released — pending next EXE build). The
+- **Status:** 🟡 mitigated, shipped v0.1.1. The
   root placement math wasn't wrong (see below) — the real gap was a SILENT fallback with
   no way to know which version needed a manual nudge. That's now flagged.
 - **What we found (confirmed by reading the actual code, not guessed):** the original

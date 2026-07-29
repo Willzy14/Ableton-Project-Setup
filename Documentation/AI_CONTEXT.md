@@ -44,6 +44,11 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 ## Current State
 
+**v0.1.1 released (2026-07-29).** Bumped, built, and published to the private
+`Willzy14/StemToAbleton-Releases` repo — bundles SNAG-001/002/003 + the .rar
+ingest fix. Existing v0.1.0 installs pick it up via the in-app Update button
+(GitHub Releases + baked read-only token, see `Studio App/updater.py`).
+
 **SNAG-003 fixed — bare "chop" is a vocal, not a music, stem (2026-07-29, Claude).** Sam
 reported a real project (Wyn Starks - COCO — the same one used as SNAG-002's ground truth,
 built before that fix landed) with a vocal chop + two drum loops parked muted at the bottom.
