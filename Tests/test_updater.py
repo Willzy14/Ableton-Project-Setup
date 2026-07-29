@@ -6,7 +6,9 @@ stubbed; the real EXE swap + relaunch is a frozen-only path Sam verifies on a bu
 """
 import sys
 import json
+import ssl
 import tempfile
+import urllib.error
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[1] / "Studio App"
@@ -84,6 +86,51 @@ def test_check_not_newer():
     finally:
         updater._api_get = orig
     assert r["ok"] and not r["available"]
+
+
+def test_api_get_retries_with_certifi_on_cert_verify_failure():
+    # Real-world case (2026-07-29): one of several machines running the
+    # identical build failed with CERTIFICATE_VERIFY_FAILED / "unable to get
+    # local issuer certificate" while the other two updated fine -- a stale
+    # local cert store, not a code bug. _api_get must retry once with
+    # certifi's own bundle instead of failing the update outright over it.
+    if updater.certifi is None:
+        print("SKIP test_api_get_retries_with_certifi_on_cert_verify_failure (no certifi installed)")
+        return
+    calls = []
+
+    def fake_fetch(url, headers, ssl_context=None):
+        calls.append(ssl_context)
+        if ssl_context is None:
+            raise urllib.error.URLError(ssl.SSLCertVerificationError(
+                1, "unable to get local issuer certificate"))
+        return _FakeResp({"ok": True})
+
+    orig = updater._fetch
+    try:
+        updater._fetch = fake_fetch
+        with updater._api_get("https://api.github.com/x", "tok") as resp:
+            assert json.loads(resp.read()) == {"ok": True}
+    finally:
+        updater._fetch = orig
+    assert len(calls) == 2
+    assert calls[0] is None            # first attempt: default (host) trust store
+    assert calls[1] is not None        # retry: explicit certifi-backed context
+
+
+def test_api_get_does_not_mask_non_ssl_errors():
+    def fake_fetch(url, headers, ssl_context=None):
+        raise urllib.error.URLError("connection refused")
+    orig = updater._fetch
+    try:
+        updater._fetch = fake_fetch
+        try:
+            updater._api_get("https://api.github.com/x", "tok")
+            assert False, "expected URLError to propagate"
+        except urllib.error.URLError:
+            pass
+    finally:
+        updater._fetch = orig
 
 
 def test_swap_script_retries_relaunches_reports_outcome():

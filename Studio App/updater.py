@@ -21,12 +21,18 @@ import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
 import urllib.request
 import urllib.error
 from pathlib import Path
+
+try:
+    import certifi
+except ImportError:  # pragma: no cover — always present in practice; degrade, don't crash
+    certifi = None
 
 APP_DIR = Path(__file__).resolve().parent
 FEED_CONFIG = APP_DIR / "update_feed.json"
@@ -117,27 +123,49 @@ def _semver(v):
     return tuple(nums + [0] * (3 - len(nums)))
 
 
-def _api_get(url, token, accept="application/vnd.github+json", strip_auth_on_redirect=True):
-    """GET a GitHub API URL with the token. For release-ASSET downloads GitHub 302s
-    to a signed URL that must be fetched WITHOUT the Authorization header (S3 rejects
-    it) — so on a cross-host redirect we drop auth and refetch."""
-    req = urllib.request.Request(url, headers={
+class _NoAuthRedirect(urllib.request.HTTPRedirectHandler):
+    """GitHub 302s a release-ASSET URL to a signed S3 URL that must be fetched
+    WITHOUT the Authorization header (S3 rejects it) — strip auth on redirect."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        newreq = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if newreq is not None:
+            newreq.headers = {k: v for k, v in newreq.headers.items()
+                              if k.lower() != "authorization"}
+        return newreq
+
+
+def _fetch(url, headers, ssl_context=None):
+    handlers = [_NoAuthRedirect()]
+    if ssl_context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=ssl_context))
+    opener = urllib.request.build_opener(*handlers)
+    return opener.open(urllib.request.Request(url, headers=headers), timeout=300)
+
+
+def _api_get(url, token, accept="application/vnd.github+json"):
+    """GET a GitHub API URL with the token.
+
+    Some machines' local certificate store is missing or stale and can't
+    verify GitHub's cert chain even though the connection itself is fine —
+    seen in the field (2026-07-29): CERTIFICATE_VERIFY_FAILED / "unable to get
+    local issuer certificate" on one of several machines running the IDENTICAL
+    build (the other two updated fine), so it's a host-machine cert-store
+    issue, not a code bug. Retries once with certifi's independently-
+    maintained CA bundle rather than failing the update outright over that
+    machine's own cert hygiene.
+    """
+    headers = {
         "Authorization": "Bearer " + token,
         "Accept": accept,
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": _UA,
-    })
-
-    class _NoAuthRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            newreq = super().redirect_request(req, fp, code, msg, headers, newurl)
-            if newreq is not None and strip_auth_on_redirect:
-                newreq.headers = {k: v for k, v in newreq.headers.items()
-                                  if k.lower() != "authorization"}
-            return newreq
-
-    opener = urllib.request.build_opener(_NoAuthRedirect())
-    return opener.open(req, timeout=300)
+    }
+    try:
+        return _fetch(url, headers)
+    except urllib.error.URLError as exc:
+        if certifi is not None and isinstance(exc.reason, ssl.SSLError):
+            return _fetch(url, headers, ssl.create_default_context(cafile=certifi.where()))
+        raise
 
 
 def check_for_update(current_version):

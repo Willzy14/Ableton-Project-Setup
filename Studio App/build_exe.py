@@ -151,20 +151,39 @@ def main():
 
     built = tmp_dist / (NAME + ".exe")
     final = APP_DIR / "dist" / (NAME + ".exe")
-    if built.exists():
-        final.parent.mkdir(parents=True, exist_ok=True)
-        import time
-        for attempt in range(8):          # a completed-file copy; retry a Dropbox lock
-            try:
-                shutil.copy2(built, final)
-                break
-            except PermissionError:
-                time.sleep(1.0)
-        print("\nBuilt: " + str(final))
-    else:
+    if not built.exists():
         print("\nBuild finished but no EXE at " + str(built) + " — check the log.")
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(build_root, ignore_errors=True)
+        return 1
+
+    built_size = built.stat().st_size
+    final.parent.mkdir(parents=True, exist_ok=True)
+    import time
+    copied = False
+    for attempt in range(8):          # a completed-file copy; retry a Dropbox lock
+        try:
+            shutil.copy2(built, final)
+            copied = True
+            break
+        except PermissionError:
+            time.sleep(1.0)
     shutil.rmtree(work, ignore_errors=True)
     shutil.rmtree(build_root, ignore_errors=True)
+
+    # A failed copy used to print "Built:" success regardless, silently
+    # leaving the PREVIOUS exe in place (2026-07-29 — a StemToAbleton.exe left
+    # running had dist/ locked for the whole retry window; every attempt
+    # failed, and a release got published under a NEW version number with the
+    # OLD, unfixed binary, unnoticed until the built file was hash-checked by
+    # hand). Verify the destination actually matches what was just built.
+    if not copied or not final.exists() or final.stat().st_size != built_size:
+        print("\nFAILED to copy the built EXE into " + str(final) + " — it's "
+              "probably still open in another process (close every "
+              "Stem -> Ableton window and re-run) or Dropbox has it locked. "
+              "dist/ still has the PREVIOUS build — do NOT publish this.")
+        return 1
+    print("\nBuilt: " + str(final))
     return 0
 
 

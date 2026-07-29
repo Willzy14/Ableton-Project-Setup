@@ -7,8 +7,47 @@ cutting a release per bug. Newest first.
 **Status key:** 🔴 open · 🟡 investigating · 🟢 fixed (note the release, e.g. `fixed v0.1.1`)
 
 Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
-Current release: **v0.1.3** (2026-07-29) — SNAG-001, SNAG-002, SNAG-003, SNAG-004
-+ the .rar ingest fix. Click Update in the app to pick it up.
+Current release: **v0.1.5** (2026-07-29) — SNAG-001 through SNAG-005 + the .rar
+ingest fix. Click Update in the app to pick it up.
+
+---
+
+## SNAG-005 — Update check failed on one machine (bad local certificate store)
+- **Status:** 🟢 fixed v0.1.5 (v0.1.4 was meant to ship this fix but didn't — see
+  the build-tooling bug below)
+- **Found:** 2026-07-29, Sam rolling v0.1.3 out to other engineers' machines — 2
+  of 3 updated cleanly; the third failed with `Update couldn't reach the update
+  repo: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify
+  failed: unable to get local issuer certificate (_ssl.c:1032)>`.
+- **Severity:** Medium — blocks that one machine from ever self-updating until
+  fixed, but doesn't affect project building, and isn't something the app can
+  cause (it's the host machine's own certificate store).
+- **Root cause:** identical build, three machines, only one failed — so this is
+  that machine's local trusted-certificate store being incomplete or stale, not
+  a code bug. Python's HTTPS check couldn't build a full chain of trust up to a
+  known root for GitHub's certificate on that machine specifically.
+- **Fix:** the app now bundles its own independently-maintained root
+  certificate bundle (`certifi`) and retries once through it automatically if
+  the connection fails with an SSL/certificate error via the host machine's own
+  store — so an out-of-date store on any one machine no longer blocks updates
+  there. Nothing needs fixing on the affected machine itself.
+- **A second, separate bug this surfaced:** the first attempt to ship this fix
+  (v0.1.4) actually shipped the OLD, unfixed binary — `build_exe.py`'s
+  copy-into-place step silently reported success even when every retry failed
+  (a `StemToAbleton.exe` left running elsewhere had the destination locked for
+  the entire retry window). Caught only by hash-checking the actual published
+  file against what should have changed. `build_exe.py` now verifies the file
+  it just built actually landed before reporting success, and refuses to
+  report success if it didn't — this exact silent-failure shape can't recur.
+- **Tests:** `Tests/test_updater.py` extended — mocked-fetch tests proving a
+  cert-verify failure retries once via certifi and succeeds, and that a
+  genuinely unrelated network error still propagates rather than being
+  swallowed. `build_exe.py`'s fix was validated by actually re-running a real
+  build end-to-end and hash/byte-size-verifying the published artifact — the
+  same real-execution standard as SNAG-004, not just a code read-through. Full
+  suite 30/30.
+- **Reviewed by Codex** (independent check of the certifi fallback + the
+  build-verification fix) — see the addendum below once complete.
 
 ---
 

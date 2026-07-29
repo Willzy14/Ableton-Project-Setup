@@ -44,6 +44,21 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 ## Current State
 
+**v0.1.5 released (2026-07-29) — SNAG-005, one machine couldn't reach the
+update repo.** Rolling v0.1.3 out to other engineers' machines: 2 of 3 updated
+cleanly, the third failed with `CERTIFICATE_VERIFY_FAILED` (that machine's own
+local trusted-certificate store, not a code bug — same build, only one
+machine hit it). Fix: the app now bundles its own certificate root bundle
+(`certifi`) and retries through it automatically if the host machine's own
+store can't verify GitHub's connection. Separately caught a real
+build-tooling bug this surfaced: v0.1.4 was meant to ship this fix but
+`build_exe.py`'s copy-into-place step silently reported success even though
+every retry had failed (something else had the destination file locked) —
+the OLD binary shipped under the new version number, unnoticed until the
+published file was hash-checked directly. `build_exe.py` now verifies the
+copy actually landed before reporting success. Full detail:
+[Snag List.md](Snag%20List.md).
+
 **v0.1.3 released (2026-07-29) — SNAG-004, the update mechanism itself.**
 Testing v0.1.1's Update button live turned up a real bug: the swap (close old
 app -> background script waits for the file to unlock -> replace -> reopen)
