@@ -18,6 +18,7 @@ path lives in engine_api.
 """
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -32,9 +33,13 @@ FEED_CONFIG = APP_DIR / "update_feed.json"
 _API = "https://api.github.com"
 _UA = "StemToAbleton-Updater"
 
-# Windows process-creation flags (DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-# so the swap script outlives the exiting app.
-_DETACHED = 0x00000008 | 0x00000200
+# Windows process-creation flags (CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP)
+# so the swap script outlives the exiting app AND is visible. Used to be fully
+# DETACHED (no console at all) — but a swap can take several seconds (Windows
+# won't release the lock on a running exe's own image until it fully exits),
+# and a silent invisible wait looked exactly like "the update did nothing"
+# (Sam, 2026-07-29). Showing SOMETHING beats a silent gap.
+_SWAP_PROCESS_FLAGS = 0x00000010 | 0x00000200
 
 
 def is_frozen():
@@ -65,6 +70,46 @@ def _config():
         except Exception:  # noqa: BLE001 — skip a corrupt config
             continue
     return {"repo": "", "token": ""}
+
+
+def _config_dir():
+    """The same stable per-user folder engine_api.py persists profiles/settings
+    to (its CONFIG_DIR) — used here so the result marker survives the swap and
+    is found regardless of where the exe itself lives."""
+    base = os.environ.get("APPDATA") or str(Path.home())
+    d = Path(base) / "StemToAbleton"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _ok_marker():
+    return _config_dir() / "update_ok.txt"
+
+
+def _fail_marker():
+    return _config_dir() / "update_failed.txt"
+
+
+def pop_update_result():
+    """Read + clear the last swap script's outcome, if any, so the (re)launched
+    app can tell the user whether their last Update actually landed instead of
+    leaving them guessing (see write_swap_script). Returns
+    {"status": "ok", "version": "v0.1.1"} / {"status": "failed", "message": "..."}
+    / None if there's nothing to report."""
+    try:
+        ok, fail = _ok_marker(), _fail_marker()
+        if ok.exists():
+            result = {"status": "ok", "version": ok.read_text(encoding="utf-8").strip()}
+            ok.unlink(missing_ok=True)
+            fail.unlink(missing_ok=True)
+            return result
+        if fail.exists():
+            result = {"status": "failed", "message": fail.read_text(encoding="utf-8").strip()}
+            fail.unlink(missing_ok=True)
+            return result
+    except Exception:  # noqa: BLE001 — a marker read failure just means no news
+        pass
+    return None
 
 
 def _semver(v):
@@ -134,23 +179,55 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def write_swap_script(new_exe, target_exe, workdir):
-    """Write a .bat that waits for the app to release its EXE, swaps in the new one,
-    relaunches it, and deletes itself. `move` retries until the running app exits."""
+def write_swap_script(new_exe, target_exe, workdir, new_version=""):
+    """Write a .bat that waits for the app to release its EXE and swaps in the
+    new one, then relaunches it.
+
+    `move` retries until the running app exits (Windows won't let you replace a
+    running exe's own image until it fully terminates) — but it used to retry
+    FOREVER with no visible feedback, which on a real update (Sam, 2026-07-29)
+    looked exactly like nothing was happening even though the swap was working;
+    it just took a few seconds longer than anyone was willing to wait and stare
+    at a closed app with no window at all. Now: capped at 30 tries (~30s), and
+    writes a plain marker file the next launch reads (see pop_update_result) so
+    the outcome — success OR failure — is always reported, never silent.
+
+    Deliberately does NOT self-delete (the classic `del "%~f0"` trick errors
+    with "The batch file cannot be found" on whatever line runs after it, since
+    cmd re-reads the .bat from disk to execute each line) — it's a few KB left
+    in its own throwaway temp workdir, not worth the fragility.
+    """
     bat = Path(workdir) / "apply_update.bat"
+    ok_marker = str(_ok_marker())
+    fail_marker = str(_fail_marker())
     lines = [
         "@echo off",
+        "title Installing Stem -^> Ableton update...",
+        "echo Installing %s ..." % (new_version or "update"),
+        "echo Please wait - this window closes on its own.",
+        "set tries=0",
         ":retry",
         'move /y "%s" "%s" >nul 2>nul' % (new_exe, target_exe),
-        "if errorlevel 1 (",
-        "  timeout /t 1 /nobreak >nul",
-        "  goto retry",
-        ")",
-        # A PyInstaller one-file EXE must relaunch as a FRESH top-level instance,
-        # or it can try to reuse the just-replaced app's _MEIPASS temp environment.
-        "set PYINSTALLER_RESET_ENVIRONMENT=1",
+        "if not errorlevel 1 goto ok",
+        "set /a tries+=1",
+        "if %tries% GEQ 30 goto fail",
+        # ping-based sleep: works with no console attached too, unlike `timeout`
+        # (which errors immediately without a real stdin handle).
+        "ping -n 2 127.0.0.1 >nul",
+        "goto retry",
+        "",
+        ":ok",
+        'echo %s> "%s"' % (new_version or "unknown", ok_marker),
+        "echo Done - reopening...",
         'start "" "%s"' % target_exe,
-        'del "%~f0"',
+        "exit",
+        "",
+        ":fail",
+        'echo Update FAILED - could not replace the app after 30 seconds.> "%s"' % fail_marker,
+        "echo.",
+        "echo Update FAILED - could not replace the app after 30 seconds.",
+        "echo Close every Stem -^> Ableton window completely, then click Update again.",
+        "ping -n 6 127.0.0.1 >nul",
         "",
     ]
     with open(bat, "w", encoding="utf-8", newline="") as fh:
@@ -170,9 +247,9 @@ def stage_download(asset_url, token, workdir):
     return dest
 
 
-def apply_update(asset_url, expected_sha256=""):
+def apply_update(asset_url, expected_sha256="", new_version=""):
     """Download the new EXE from the private repo, VERIFY its sha256 (if published),
-    then spawn the detached swap script. The caller then exits so the script can
+    then spawn the visible swap script. The caller then exits so the script can
     replace + relaunch the EXE."""
     if not is_frozen():
         return {"ok": False, "error": "Update-apply only runs in the packaged app."}
@@ -196,6 +273,6 @@ def apply_update(asset_url, expected_sha256=""):
             return {"ok": False, "error": "Update REJECTED — the downloaded file's "
                     "checksum didn't match the release (expected " + expected[:12]
                     + "…, got " + actual[:12] + "…). Not installing."}
-    bat = write_swap_script(new_exe, target, work)
-    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=_DETACHED, close_fds=True)
+    bat = write_swap_script(new_exe, target, work, new_version)
+    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=_SWAP_PROCESS_FLAGS, close_fds=True)
     return {"ok": True, "relaunching": True}

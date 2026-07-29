@@ -7,8 +7,52 @@ cutting a release per bug. Newest first.
 **Status key:** 🔴 open · 🟡 investigating · 🟢 fixed (note the release, e.g. `fixed v0.1.1`)
 
 Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
-Current release: **v0.1.1** (2026-07-29) — SNAG-001, SNAG-002, SNAG-003 + the
-.rar ingest fix. Click Update in the app to pick it up.
+Current release: **v0.1.3** (2026-07-29) — SNAG-001, SNAG-002, SNAG-003, SNAG-004
++ the .rar ingest fix. Click Update in the app to pick it up.
+
+---
+
+## SNAG-004 — Update installs silently / no way to tell if it worked
+- **Status:** 🟢 fixed v0.1.3 (v0.1.2 shipped the same day also had this fix, but
+  with its own bug — see below — so treat v0.1.2 as never having gone out)
+- **Found:** 2026-07-29, in-studio (Sam), while testing the v0.1.1 release live —
+  clicked Update, confirmed "Download and install," and the version number never
+  changed, with no error shown. Directly relevant to Sam's plan to have other
+  engineers update their own machines unsupervised.
+- **Severity:** High for a self-update feature — a silent, ambiguous outcome is
+  as bad as a broken one when nobody else is around to diagnose it live.
+- **Root cause:** the swap (old app closes -> a background script waits for the
+  file to unlock, replaces it, reopens the app) genuinely worked, verified byte
+  -for-byte via sha256 on the machine mid-investigation — but it ran fully
+  invisibly (`DETACHED_PROCESS`, no console) and could take several seconds
+  (Windows won't let you replace a running exe's own image until it fully
+  exits), with the only user-facing feedback a toast that vanishes when the app
+  closes. So it looked exactly like nothing was happening, and there was no
+  way to tell success from failure afterward either.
+- **Fix:** the swap now runs in a visible "Installing..." window instead of a
+  detached one; the retry loop is capped at 30 seconds instead of looping
+  forever with no feedback; and either outcome — success or failure — writes a
+  marker the app reads on its next launch and reports plainly ("Updated to
+  vX.X.X" / "Update didn't install: <reason>"), so the user is never left
+  guessing. Also replaced the `timeout` command (silently errors with no
+  console attached) with a console-independent `ping`-based wait, and removed
+  a dead `PYINSTALLER_RESET_ENVIRONMENT` flag left over from the original
+  implementation that isn't a real PyInstaller setting and did nothing.
+- **v0.1.2 bug (same day, fixed in v0.1.3):** the new progress window's title
+  line had an unescaped `>` ("Installing Stem -> Ableton update...") — cmd.exe
+  always treats a bare `>` as a redirect, so it silently created a stray empty
+  file called "Ableton" instead of printing the title. Caught by actually
+  RUNNING the install script for real on a throwaway target rather than only
+  reading its generated text — the fix that mattered here was the process, not
+  just the patch: every new/changed line of a batch script needs a live
+  `cmd.exe` run, not just a string-content test.
+- **Tests:** `Tests/test_updater.py` extended — asserts the retry cap, the
+  console-safe sleep, the marker-writing on both outcomes, and (new) that no
+  line contains an unescaped `>` outside a real redirect. Also verified by
+  actually executing the generated script three times against throwaway exe
+  copies: a normal success, a forced 30-second failure (target path made
+  permanently unreachable), and a final clean run confirming no stray files.
+  Full suite 30/30.
 
 ---
 

@@ -442,12 +442,17 @@ class Api:
 
     # ---- bootstrap / settings ----
     def get_bootstrap(self):
+        import updater
         return {
             "profiles": load_profiles(),
             "settings": load_settings(),
             "palette": ABLETON_PALETTE,
             "colorCategories": COLOR_CATEGORIES,
             "version": get_version(),
+            # Did the last Update actually land? The swap happens in a background
+            # script after this app has already quit, so this is the first chance
+            # to tell the user whether it worked (see updater.write_swap_script).
+            "updateResult": updater.pop_update_result(),
         }
 
     def update_app(self):
@@ -483,7 +488,7 @@ class Api:
             return {"ok": False, "error": str(exc)}
 
     def apply_update(self, asset_url):
-        """Download the new EXE, spawn the detached swap script, then quit so it
+        """Download the new EXE, spawn the visible swap script, then quit so it
         can replace and relaunch us. Only meaningful in the packaged app.
         """
         import updater
@@ -491,7 +496,8 @@ class Api:
         # round-tripped through the UI) and verify the download against it.
         info = updater.check_for_update(get_version())
         expected_sha = info.get("sha256", "") if info.get("ok") else ""
-        res = updater.apply_update(asset_url, expected_sha)
+        latest = info.get("latest", "") if info.get("ok") else ""
+        res = updater.apply_update(asset_url, expected_sha, latest)
         if res.get("ok") and res.get("relaunching"):
             def _quit():
                 try:

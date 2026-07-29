@@ -44,6 +44,20 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 ## Current State
 
+**v0.1.3 released (2026-07-29) — SNAG-004, the update mechanism itself.**
+Testing v0.1.1's Update button live turned up a real bug: the swap (close old
+app -> background script waits for the file to unlock -> replace -> reopen)
+actually worked, confirmed byte-for-byte via sha256 mid-investigation, but ran
+fully invisibly with no console and no success/failure confirmation — so a
+correct update looked exactly like a broken one. Fixed: the swap now runs in a
+visible "Installing..." window, the retry loop is capped at 30s instead of
+looping forever, and the app reports the outcome plainly on its next launch
+either way ("Updated to vX.X.X" / "Update didn't install: <reason>"). v0.1.2
+shipped the same day with a bug in this same fix (an unescaped `>` in the new
+window's title line made cmd.exe silently create a stray file) — caught only
+by actually RUNNING the generated script for real, not just reading its text;
+v0.1.3 supersedes it. Full detail: [Snag List.md](Snag%20List.md).
+
 **v0.1.1 released (2026-07-29).** Bumped, built, and published to the private
 `Willzy14/StemToAbleton-Releases` repo — bundles SNAG-001/002/003 + the .rar
 ingest fix. Existing v0.1.0 installs pick it up via the in-app Update button

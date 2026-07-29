@@ -86,16 +86,54 @@ def test_check_not_newer():
     assert r["ok"] and not r["available"]
 
 
-def test_swap_script_retries_relaunches_resets_env():
+def test_swap_script_retries_relaunches_reports_outcome():
     tmp = Path(tempfile.mkdtemp())
-    bat = updater.write_swap_script(tmp / "new.exe", tmp / "app.exe", tmp)
+    bat = updater.write_swap_script(tmp / "new.exe", tmp / "app.exe", tmp, "v0.1.1")
     raw = bat.read_bytes()
     assert b"\r\n" in raw and b"\r\r\n" not in raw   # clean CRLF for cmd.exe
     text = raw.decode("utf-8")
     assert ":retry" in text and "goto retry" in text
     assert "move /y" in text and "new.exe" in text and "app.exe" in text
-    assert "PYINSTALLER_RESET_ENVIRONMENT=1" in text  # one-file fresh relaunch
-    assert 'start "" ' in text and "del " in text
+    assert 'start "" ' in text
+    assert "del " not in text   # the self-delete trick errors after deleting itself
+    # Bounded retry (used to loop forever with no feedback) + a visible window
+    # instead of the old fully-detached one (Sam couldn't tell if it was stuck).
+    assert "tries+=1" in text and "GEQ 30" in text
+    assert "ping -n 2 127.0.0.1" in text          # console-safe sleep, not `timeout`
+    assert "PYINSTALLER_RESET_ENVIRONMENT" not in text  # dead flag, removed
+    # Both outcomes get written somewhere the next launch can read and report.
+    assert ":ok" in text and "update_ok.txt" in text and "v0.1.1" in text
+    assert ":fail" in text and "update_failed.txt" in text
+    # Every literal '>' outside a real redirect must be caret-escaped, or cmd.exe
+    # silently creates a stray file instead of printing it (a real bug caught by
+    # actually RUNNING this script, 2026-07-29 — the `title` line's arrow wasn't
+    # escaped and cmd.exe redirected it into a file called "Ableton"). Redirect
+    # targets (move/echo-to-marker/ping output) are the only allowed bare '>'.
+    for line in text.splitlines():
+        if line.startswith(("move ", "ping ")) or "> \"" in line or ">nul" in line:
+            continue
+        assert "^>" in line or ">" not in line, "unescaped > will redirect: " + repr(line)
+
+
+def test_pop_update_result_reads_and_clears_markers(monkeypatch=None):
+    tmp = Path(tempfile.mkdtemp())
+    orig = updater._config_dir
+    try:
+        updater._config_dir = lambda: tmp
+        assert updater.pop_update_result() is None      # nothing written yet
+
+        (tmp / "update_ok.txt").write_text("v0.1.1\n", encoding="utf-8")
+        r = updater.pop_update_result()
+        assert r == {"status": "ok", "version": "v0.1.1"}
+        assert not (tmp / "update_ok.txt").exists()      # cleared after reading
+        assert updater.pop_update_result() is None        # only reports once
+
+        (tmp / "update_failed.txt").write_text("could not replace the app\n", encoding="utf-8")
+        r = updater.pop_update_result()
+        assert r == {"status": "failed", "message": "could not replace the app"}
+        assert not (tmp / "update_failed.txt").exists()
+    finally:
+        updater._config_dir = orig
 
 
 if __name__ == "__main__":

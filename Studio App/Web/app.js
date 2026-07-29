@@ -41,6 +41,15 @@ async function init() {
     State.profiles = boot.profiles;
     State.settings = boot.settings;
     State.version = boot.version;
+    // Report the outcome of the last Update click, if any — the swap runs in a
+    // background script after the app has already quit, so this first boot back
+    // is the first chance to confirm it actually worked (or tell you it didn't).
+    const ur = boot.updateResult;
+    if (ur && ur.status === "ok") {
+      toast("Updated to " + ur.version + ".", "good");
+    } else if (ur && ur.status === "failed") {
+      toast("Update didn't install: " + ur.message, "bad");
+    }
   } else {
     if (State.previewBooted) return;         // already showing the preview shell
     State.previewBooted = true;              // PROVISIONAL — pywebviewready can still upgrade us
