@@ -44,6 +44,21 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 ## Current State
 
+**SNAG-003 fixed — bare "chop" is a vocal, not a music, stem (2026-07-29, Claude).** Sam
+reported a real project (Wyn Starks - COCO — the same one used as SNAG-002's ground truth,
+built before that fix landed) with a vocal chop + two drum loops parked muted at the bottom.
+The loops were already covered by SNAG-002; the chop wasn't — SNAG-002's own ground truth had
+guessed bare "chop" = music, and Sam corrected that. Rather than guess again, mined every
+chop/chops clip across Sam's full 147+ project history: every bare "Chop"/"Chops" with no
+instrument attached (incl. one literally named just "CHOP") was coloured vocals in his real
+work; only an explicit instrument name ("Guitar Chop") was ever music. Moved bare-chop into
+the guarded weak-vocal-signal check (same mechanism as hook/topline/throw) so a real
+instrument still overrides it, and fixed a related tokenising gap the mining surfaced
+("24guitar" — a digit glued straight onto a word — wasn't recognised as "guitar" at all).
+Classifier agreement against Sam's real corpus: **88.9% → 91.6%**. Full detail:
+[Snag List.md](Snag%20List.md). Sam must rebuild the COCO project (and any pack with a bare
+chop stem) to pick this up.
+
 **SNAG-001 mitigated (2026-07-29, Claude).** The original hypothesis (both mine and the
 peers') was wrong: the primary/base version does NOT get placed at a fixed uncorrected
 offset — `_detect_version_stack_anchor_sec` already runs identically for every version. The

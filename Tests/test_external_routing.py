@@ -88,8 +88,11 @@ def test_production_2mix_names_stay_working_through_complex_layout():
         ("WynStarks_COCO_DA_2MIX_loop1", "drums"),
         ("WynStarks_COCO_DA_2MIX_loop2", "drums"),
         ("LR_OneWayTicket_DA_2MIX_ohh", "drums"),
-        ("WynStarks_COCO_DA_2MIX_CHOP", "music"),
-        ("LR_OneWayTicket_DA_2MIX_CHOPS", "music"),
+        # A bare "chop" is a vocal chop, not an instrumental one, confirmed against
+        # real-corpus evidence (see stem_classifier.py's weak-vocal-signal guard) —
+        # this is the exact stem Sam reported on this real project (2026-07-29).
+        ("WynStarks_COCO_DA_2MIX_CHOP", "vocals"),
+        ("LR_OneWayTicket_DA_2MIX_CHOPS", "vocals"),
         ("LR_OneWayTicket_DA_2MIX_GTRS", "music"),
     ]
     for name, expected in real_names:
@@ -105,14 +108,11 @@ def test_production_2mix_names_stay_working_through_complex_layout():
             subgroup_key="kit", subgroup_name="Kit", subgroup_color=6,
         ))
     for name, category in real_names[3:]:
-        subgroup = (
-            {"subgroup_key": "chops", "subgroup_name": "Chops", "subgroup_color": 8}
-            if "CHOP" in name else {}
-        )
-        stems.append(_stem(
-            audio_dir, name, category,
-            group_key="music", group_name="Music", **subgroup,
-        ))
+        group = ({"group_key": "vocals", "group_name": "Vox",
+                  "subgroup_key": "chops", "subgroup_name": "Chops", "subgroup_color": 8}
+                 if category == "vocals"
+                 else {"group_key": "music", "group_name": "Music"})
+        stems.append(_stem(audio_dir, name, category, **group))
 
     # Match the real project-builder tail order: working, Dry park, refs,
     # refcompare, bus park, silent park.

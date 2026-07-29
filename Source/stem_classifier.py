@@ -119,7 +119,10 @@ MUSIC_PATTERNS = [
     r"\btrombone",
     r"\bwhistle",
     r"\briff",           # a riff is an instrumental melodic line
-    r"\bchops?\b",       # bare Chop/Chops is musical; Vocal Chop is caught first
+    # NB: bare "Chop"/"Chops" is NOT here — real-corpus evidence (147+ projects) shows
+    # a bare chop defaults to VOCALS for Sam (guarded weak-vocal signal, see
+    # _score_category); only an EXPLICITLY named instrument chop ("Guitar Chop",
+    # "Synth Chop") is music, and those already match via \bguitar / \bsynth above.
 ]
 
 VOCAL_PATTERNS = [
@@ -288,15 +291,20 @@ def _score_category(name):
     has_strong_fx = _matches_any(name, FX_STRONG_PATTERNS)
     has_drums = _matches_any(name, DRUMS_PATTERNS)
 
-    # "Hook", "topline" and "throw" are weak vocal signals — a hook/topline is
-    # usually the vocal part (Hook Main, Hook BG, Hook V2, Topline), and a "delay
-    # throw" is a thrown vocal (Sam). They only read as vocals when no real
-    # instrument/percussion/FX claims the name. Strip those words first (their own
-    # "top" would otherwise trip the drums 'tops' pattern) and see if anything else
-    # claims what's left: "Guitar Topline"/"Synth Hook"/"Snare Throw" keep their
-    # instrument, "Hook Riser" stays FX; a bare "Delay Throw" reads as vocals.
-    if re.search(r"\bhook|\btop.?line|\bthrows?\b", name):
-        residual = re.sub(r"\bhook|\btop.?line|\bthrows?\b", " ", name)
+    # "Hook", "topline", "throw" and "chop" are weak vocal signals — a hook/topline
+    # is usually the vocal part (Hook Main, Hook BG, Hook V2, Topline), a "delay
+    # throw" is a thrown vocal (Sam), and a bare "chop" defaults to a vocal chop —
+    # confirmed against real-corpus evidence (147+ finished projects): every bare
+    # "Chop"/"Chops" with no instrument name attached was coloured vocals, incl. a
+    # stem named literally just "CHOP" (Stephani B - Activ-8) and the real WynStarks
+    # - COCO project Sam hit this bug on ("..._2MIX_CHOP.wav"). They only read as
+    # vocals when no real instrument/percussion/FX claims the name. Strip those
+    # words first (their own "top" would otherwise trip the drums 'tops' pattern)
+    # and see if anything else claims what's left: "Guitar Topline"/"Synth Hook"/
+    # "Snare Throw"/"Guitar Chop"/"Synth Chop" keep their instrument, "Hook Riser"
+    # stays FX; a bare "Delay Throw" or "Chop" reads as vocals.
+    if re.search(r"\bhook|\btop.?line|\bthrows?\b|\bchops?\b", name):
+        residual = re.sub(r"\bhook|\btop.?line|\bthrows?\b|\bchops?\b", " ", name)
         if not (_matches_any(residual, MUSIC_PATTERNS)
                 or _matches_any(residual, BASS_PATTERNS)
                 or _matches_any(residual, DRUMS_PATTERNS)
@@ -346,6 +354,10 @@ def classify_stem(filename):
     name = Path(filename).stem
     name = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
     name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", name)
+    # A leading export-number glued straight onto a word ("24guitar", "01vocal")
+    # has no word boundary for \bguitar/\bvocal to latch onto — split it so the
+    # instrument/category word is recognised (real case: "SMF- 24guitar chop").
+    name = re.sub(r"(\d)([A-Za-z])", r"\1 \2", name)
     name = name.lower()
     name = re.sub(r"[_\-\.]+", " ", name)
     name = " " + name + " "

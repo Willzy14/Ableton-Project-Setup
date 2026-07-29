@@ -62,10 +62,20 @@ GROUND_TRUTH = {
     # stem type. These working tracks were incorrectly made red/muted/Ext. Out.
     "WynStarks_COCO_DA_2MIX_loop1.wav": "drums",
     "WynStarks_COCO_DA_2MIX_loop2.wav": "drums",
-    "WynStarks_COCO_DA_2MIX_CHOP.wav": "music",
     "LR_OneWayTicket_DA_2MIX_ohh.wav": "drums",
     "LR_OneWayTicket_DA_2MIX_GTRS.wav": "music",
-    "LR_OneWayTicket_DA_2MIX_CHOPS.wav": "music",
+    # A bare "chop" is a VOCAL chop, not instrumental — confirmed against
+    # real-corpus evidence (Sam, 2026-07-29): every bare Chop/Chops with no
+    # instrument name attached, across 147+ finished projects, was coloured
+    # vocals (incl. a stem literally just named "CHOP"). Sam hit this exact stem
+    # misclassified + parked at the bottom on this real project.
+    "WynStarks_COCO_DA_2MIX_CHOP.wav": "vocals",
+    "LR_OneWayTicket_DA_2MIX_CHOPS.wav": "vocals",
+    "CHOP.wav": "vocals",
+    "Guitar Chop.wav": "music",         # an explicit instrument name still wins
+    "Synth Chop.wav": "music",
+    "SMF-  24guitar chop.wav": "music",  # a digit glued to a word (no space) is
+                                        # split so \bguitar still matches
 }
 
 # These must stay put — the additions above must not steal them.

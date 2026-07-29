@@ -10,6 +10,40 @@ Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
 
 ---
 
+## SNAG-003 — "Chop" and drum-loop stems misclassified and parked muted
+- **Status:** 🟢 fixed (2026-07-29, not yet released — pending next EXE build)
+- **Found:** 2026-07-29, in-studio (Sam) — real project **Wyn Starks - COCO (Dave Aude
+  Remix)**, built the day before this fix.
+- **Severity:** Medium. Three stems (a vocal chop + two drum loops) silently parked at the
+  bottom of the arrangement and muted instead of taking their normal working-track slots.
+- **Symptom:** `WynStarks_COCO_DA_2MIX_CHOP.wav` (a vocal chop), `..._loop1.wav` and
+  `..._loop2.wav` (drum loops) all ended up at the bottom of the project, turned off.
+- **Root cause:** this is the SAME project used as ground truth for SNAG-002, and this
+  build predates that fix — the old "2MIX" regex swept every stem sharing that export-set
+  prefix into "reference" (muted, bottom). SNAG-002 already fixes `loop1`/`loop2` (both
+  correctly become **drums**). But the classifier's separate assumption about a bare "chop"
+  — that it's an instrumental sample chop, not a vocal one — was ALSO wrong for this real
+  stem, and would have kept it out of the mute pile but landed it in the wrong category
+  (music, not vocals).
+- **Fix:** mined every "chop"/"chops" clip across Sam's full project history (147+ finished
+  mixes) as ground truth. Every bare "Chop"/"Chops" with no instrument name attached —
+  including a stem literally just named "CHOP" — was coloured **vocals**; only an explicit
+  instrument qualifier ("Guitar Chop", "Synth Chop") stayed music. The classifier's bare-chop
+  pattern was moved from the music list into the guarded weak-vocal-signal check (same
+  mechanism as "hook"/"topline"/"throw"), so a real instrument name still overrides it.
+  Also fixed a related tokenising gap the mining turned up: a digit glued directly onto a
+  word with no space ("24guitar") wasn't recognised as the word "guitar" at all — now split
+  before matching.
+- **Result:** classifier agreement against Sam's full real-project corpus rose from 88.9% to
+  **91.6%** (147 → 165 projects, as more got added) from this one fix.
+- **Tests:** `Tests/test_classifier_ground_truth.py` + `Tests/test_external_routing.py`
+  extended with the corrected categories. Full suite 29/29; both M1-harness fixtures
+  (Admonic single + Fallon multi) rebuild byte-identical.
+- **Sam must rebuild this project** (and any other pack with a bare "chop" stem) to pick up
+  the correct classification.
+
+---
+
 ## SNAG-002 — Working tracks incorrectly routed to External Out
 - **Status:** 🟢 fixed (2026-07-29, not yet released — pending next EXE build)
 - **Root cause (confirmed via the two real affected projects' actual filenames, three
