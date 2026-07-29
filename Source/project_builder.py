@@ -1325,11 +1325,13 @@ def build_project(stem_folder, artist, title, label, bpm=None, output_base=None,
     refcompare_files, _sk = _ensure_wav_paths(refcompare_files, wav_staging)
     pre_skipped += _skip_labels(_sk)
 
-    # Audio-content safety net (numpy): a file filenames couldn't place
-    # (music/unclassified) but that ANALYSES as a full mix / master / sub-bounce
+    # Audio-content safety net (numpy): a file whose filename couldn't place it
+    # but that ANALYSES as a full mix / master / sub-bounce
     # is moved to references — so it is kept OUT of the flat bounce (summing a
     # whole mix into the reference would pollute it). No-op without numpy.
-    suspects = list(unclassified) + list(classified.get("music", []))
+    # Explicitly named music stems are not suspects: a loud/dense synth or
+    # guitar can share full-mix features and must remain a working track.
+    suspects = list(unclassified)
     # When numpy is absent the full-mix / group-bus safety nets can't run — flag
     # it so an un-caught full mix / bus summed into the flat ref isn't a silent
     # surprise (on Sam's machine numpy is present, so this never fires there).
@@ -1722,9 +1724,8 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
     classified, references, unclassified, v_skipped = _normalize_audio_to_wav(
         classified, references, unclassified, version_audio_dir / "_wav_staging")
 
-    music = classified.get("music", [])
     fulls = []
-    for f in list(unclassified) + list(music):
+    for f in list(unclassified):
         try:
             if audio_label(f) == "full_mix":
                 fulls.append(f)
@@ -1732,9 +1733,6 @@ def _process_version_files(files, version_audio_dir, rel_prefix, use_ml=True,
             pass
     if fulls:
         references += fulls
-        classified["music"] = [f for f in music if f not in fulls]
-        if not classified["music"]:
-            classified.pop("music", None)
         unclassified = [f for f in unclassified if f not in fulls]
 
     if unclassified:

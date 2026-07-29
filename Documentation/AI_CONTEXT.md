@@ -44,6 +44,24 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 ## Current State
 
+**SNAG-002 fixed + .rar stem-pack support (2026-07-29, Claude + Codex).** Sam hit a real ingest
+failure ("Slot Machine STEMS.rar" → baffling "no usable rhythmic stem" BPM error) — the Studio
+App only ever extracted `.zip`, so a `.rar` silently matched no branch and the build saw zero
+stems. Fixed: `.rar` support via WinRAR/7-Zip (whichever is on the machine), mirroring the `.zip`
+code paths exactly, same zip-slip safety guard, and a clear actionable error if no extractor is
+installed. Verified end-to-end against the real file (11 stems, builds a 12-track project).
+**SNAG-002 (below) is now 🟢 fixed** — Codex (high effort, `/peer-comms-headless`, workspace-write)
+investigated and found THREE independent real contributors, all fixed: (1) `REFERENCE_PATTERNS`'
+"2MIX" regex matched anywhere in a filename, sweeping every stem in a `2MIX`-export-tagged pack
+into "reference" (confirmed against the two real affected projects' actual filenames); (2) the
+numpy full-mix safety net also ran on filename-confident `music` stems, letting a loud/dense synth
+get second-guessed into a reference; (3) every non-reference/non-bus working track is now
+EXPLICITLY routed to Main (`set_track_output_main`), not trusting a reused template slot's prior
+routing. `validate_project.py` now hard-fails on any working track routed to Ext. Out. Claude
+independently re-reviewed the diff line-by-line and re-ran the full suite (not just Codex's
+self-report) before committing: 28/28. Full detail: [Snag List.md](Snag%20List.md). SNAG-001
+(Extended-mix clip lands off-grid) is next, handed to MiniMax to keep Claude usage low.
+
 **Snag update (2026-07-17):** **SNAG-002** records a high-severity, silent export issue observed across two real projects: one then five normal working tracks were routed to External Out and bypassed Main/Master, so were missing from the final master. The eventual fix must add a validator hard-fail for any non-reference track routed to `AudioOut/External`.
 **SHIPPED v0.1.0 — packaged, branded, self-updating EXE (2026-07-14, Claude).** The Studio App is now a distributable Windows EXE, sent to Sam's machines and **running real jobs** (multiple packs built + opened in Ableton, look/sound right). Landed this session: **(1) Private auto-update, end-to-end.** `updater.py` targets a PRIVATE releases repo (`Willzy14/StemToAbleton-Releases`) with a baked **read-only fine-grained PAT** (Bearer auth; strips the auth header on the signed-asset 302; sha256 parsed from the release body). `build_exe.py` bakes the token from a gitignored `release_token.local` into the bundled `update_feed.json` at build time (never committed). `publish_release.py` cuts a `gh release` at the current VERSION with the EXE + sha256 using Sam's own `gh` login (no publish token baked). Token created + verified (HTTP 200 read of the private repo), **v0.1.0 baseline release published**, and the app's exact update path validated live (baked token → `/releases/latest` → HTTP 200, tag `v0.1.0`, asset 25 MB, sha256 == the built EXE). **Hard rule (Sam): the tool must NOT be publicly downloadable** — so BOTH the source repo and the releases repo are private; the baked token is read-only + revocable. **(2) Custom app icon + UI cohesion** — a blended Wired Masters monogram + Ableton clip-strip on a dark rounded tile (`Assets/AppIcon.ico`, multi-res 16–256px) set as the EXE `--icon`; the UI header shows the matching monogram tile (`Web/assets/brand_tile.png`) at **64px** so the running app reads as one identity with its taskbar icon. **(3) WebView2 = lean, not bundled** — the 25 MB EXE relies on the machine's own WebView2 (all Sam's machines have it) with the in-app preflight warning + installer prompt as the clean-machine backstop; bundling the ~150 MB Fixed-Version runtime was rejected as not worth the size for Sam's fleet. **Now in snag-collection:** post-ship issues go in [Snag List.md](<Snag List.md>) and are **batched into one update, not a release per bug** (Sam's policy). Open: **SNAG-001** — on an Extended+Radio-edit pack the BPM was correct and the Radio edit landed on grid, but the Extended mix was slightly off grid (low, non-blocking). **Still Sam-side:** a clean-machine smoke test (first run / folder+zip build / forced-fail recovery / updater swap+relaunch / open the `.als`). Taskbar pin on Win11 = run the EXE, then right-click its live taskbar icon → Pin to taskbar (loose `.exe`s don't expose it directly).
 

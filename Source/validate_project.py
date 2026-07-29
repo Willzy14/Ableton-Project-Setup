@@ -27,6 +27,10 @@ class TrackInfo:
     def is_reference(self) -> bool:
         return self.color == "14" and self.has_clip
 
+    @property
+    def is_refcompare(self) -> bool:
+        return self.color == "26" and self.has_clip
+
 
 @dataclass
 class ValidationResult:
@@ -232,6 +236,13 @@ def validate_path(path: str | Path, expected_tempo: float | None = None) -> Vali
             result.errors.append(f"reference track is not muted: {track.name}")
         if not (track.output_target or "").startswith("AudioOut/External"):
             result.errors.append(f"reference track is not routed to Ext. Out: {track.name}")
+
+    for track in tracks:
+        if (track.type == "AudioTrack" and track.has_clip
+                and not track.is_reference and not track.is_refcompare
+                and (track.output_target or "").startswith("AudioOut/External")):
+            result.errors.append(
+                f"working track is incorrectly routed to Ext. Out: {track.name}")
 
     for track in tracks:
         if track.has_clip and not track.file_refs:

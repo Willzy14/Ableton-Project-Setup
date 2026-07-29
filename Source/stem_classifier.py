@@ -71,7 +71,8 @@ DRUMS_PATTERNS = [
     r"\bride\b",
     r"\bfills?\b",
     r"\b808\b",
-    r"\bloop\b",
+    r"\bloops?\d*\b",    # loop / loops / loop1 (common export suffix)
+    r"\bohh?\b",         # OH/OHH = open hi-hat
     r"\btimp",
 ]
 
@@ -81,7 +82,7 @@ MUSIC_PATTERNS = [
     r"\bmelod",
     r"\bpiano",
     r"\bpno\b",          # piano abbrev
-    r"\bgtr\b",          # guitar abbrev
+    r"\bgtrs?\b",        # gtr / gtrs guitar abbrev
     r"\bkeys?\b",
     r"\bpads?\b",
     r"\bstring",
@@ -118,6 +119,7 @@ MUSIC_PATTERNS = [
     r"\btrombone",
     r"\bwhistle",
     r"\briff",           # a riff is an instrumental melodic line
+    r"\bchops?\b",       # bare Chop/Chops is musical; Vocal Chop is caught first
 ]
 
 VOCAL_PATTERNS = [
@@ -211,7 +213,10 @@ REFERENCE_PATTERNS = [
     r"\bflat.?mix",
     r"\bpre.?master",
     r"\bfull.?mix",
-    r"\b2[\s_-]?mix\b",
+    # "2MIX" is often a shared export-set prefix on EVERY stem
+    # (Artist_Title_2MIX_loop1). It is only a reference signal when it ends the
+    # filename or is followed by an explicit reference/bounce/master qualifier.
+    r"\b2\s*mix(?:\s+(?:ref|reference|bounce|master))?\s*$",
     r"\bmixdown",
     r"\bsw\s+v\d",
     r"\bsw\s+flat",

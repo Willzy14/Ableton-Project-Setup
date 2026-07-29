@@ -11,7 +11,31 @@ Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
 ---
 
 ## SNAG-002 — Working tracks incorrectly routed to External Out
-- **Status:** 🔴 open
+- **Status:** 🟢 fixed (2026-07-29, not yet released — pending next EXE build)
+- **Root cause (confirmed via the two real affected projects' actual filenames, three
+  independent contributors, all fixed):**
+  1. `REFERENCE_PATTERNS`' "2MIX" regex matched ANYWHERE in a filename, not just as the
+     terminal token — so every stem in a pack sharing a `..._2MIX_loop1` / `..._2MIX_GTRS`
+     style export-set prefix got swept into "reference" (muted, Ext. Out), even though 2MIX
+     was just the producer's shared export tag, not a real full-mix bounce. Fixed: the
+     pattern now only matches "2MIX" as the last token, optionally followed by an explicit
+     ref/reference/bounce/master qualifier.
+  2. The numpy full-mix "audio safety net" was also being run on stems the FILENAME had
+     already confidently classified as `music` (not just genuinely unclassified ones) — a
+     loud/dense synth or guitar can share full-mix acoustic features and got second-guessed
+     into a reference purely on audio content. Fixed: the safety net now only considers
+     genuinely unclassified stems.
+  3. Defense in depth: every non-reference/non-bus working track is now EXPLICITLY routed to
+     Main (`als_patcher.set_track_output_main`) rather than trusting whatever routing the
+     reused template slot happened to already have.
+- **Validator hardened:** `validate_project.py` now hard-fails if any non-reference/
+  non-refcompare working track is routed to Ext. Out.
+- **Tests:** `Tests/test_external_routing.py` (new — reproduces the exact real-project
+  filenames, incl. a poisoned-template-slot adversarial test proving fix #3 actively
+  corrects stale routing, not just happens to work) + `Tests/test_validate_project.py` +
+  `Tests/test_classifier_ground_truth.py` (both extended). Full suite 28/28.
+- **Investigated + fixed by Codex** (`/peer-comms-headless`, high effort, workspace-write),
+  reviewed + independently re-verified by Claude before commit.
 - **Found:** 2026-07-17 — occurred across two real projects in studio use (Sam).
 - **Severity:** High. The project appears normal during setup, but affected tracks bypass
   the Main/Master channel and are silently missing from the final exported master.

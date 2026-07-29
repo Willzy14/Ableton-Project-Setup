@@ -17,6 +17,10 @@ def _cat(name):
     return classify_stem(name)[0]
 
 
+def _is_ref(name):
+    return classify_stem(name)[1]
+
+
 # name -> expected category, drawn from real projects the classifier used to miss
 GROUND_TRUTH = {
     # guitar / piano abbreviations (were falling through to a 2MIX "reference")
@@ -54,6 +58,14 @@ GROUND_TRUTH = {
     "FX_FILLS.wav": "fx",
     "FILLS_FX.wav": "fx",
     "FX Fills.wav": "fx",
+    # SNAG-002 production failures: "2MIX" is the export-set prefix, not the
+    # stem type. These working tracks were incorrectly made red/muted/Ext. Out.
+    "WynStarks_COCO_DA_2MIX_loop1.wav": "drums",
+    "WynStarks_COCO_DA_2MIX_loop2.wav": "drums",
+    "WynStarks_COCO_DA_2MIX_CHOP.wav": "music",
+    "LR_OneWayTicket_DA_2MIX_ohh.wav": "drums",
+    "LR_OneWayTicket_DA_2MIX_GTRS.wav": "music",
+    "LR_OneWayTicket_DA_2MIX_CHOPS.wav": "music",
 }
 
 # These must stay put — the additions above must not steal them.
@@ -83,6 +95,20 @@ def test_ground_truth_names_classify_correctly():
 def test_new_patterns_do_not_regress_guards():
     wrong = {n: (_cat(n), exp) for n, exp in GUARDS.items() if _cat(n) != exp}
     assert not wrong, "guard broken: " + str(wrong)
+
+
+def test_2mix_only_marks_terminal_reference_forms():
+    cases = {
+        "Artist_Title_2MIX.wav": True,
+        "Artist_Title_2MIX_REF.wav": True,
+        "Artist_Title_2MIX_reference.wav": True,
+        "Artist_Title_2MIX_bounce.wav": True,
+        "Artist_Title_2MIX_master.wav": True,
+        "Artist_Title_2MIX_unknownstem.wav": False,
+        "Artist_Title_2MIX_loop1.wav": False,
+    }
+    wrong = {n: (_is_ref(n), exp) for n, exp in cases.items() if _is_ref(n) != exp}
+    assert not wrong, "2MIX reference boundary broken: " + str(wrong)
 
 
 if __name__ == "__main__":

@@ -154,6 +154,23 @@ def set_track_output_external(lines, track):
                 lines[i] = re.sub(r'Value="[^"]*"', 'Value="1/2"', lines[i])
 
 
+def set_track_output_main(lines, track):
+    """Route a track's audio output through Main."""
+    in_block = False
+    for i in range(track["start"], track["end"] + 1):
+        if "<AudioOutputRouting>" in lines[i]:
+            in_block = True
+        elif "</AudioOutputRouting>" in lines[i]:
+            break
+        elif in_block:
+            if "<Target Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value="AudioOut/Main"', lines[i])
+            elif "<UpperDisplayString Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value="Main"', lines[i])
+            elif "<LowerDisplayString Value=" in lines[i]:
+                lines[i] = re.sub(r'Value="[^"]*"', 'Value=""', lines[i])
+
+
 def set_track_muted(lines, track, muted=True):
     """Set a track's Speaker (mixer on/off). muted=True -> Manual=false (off)."""
     val = "false" if muted else "true"
@@ -1456,6 +1473,11 @@ def patch_project(template_path, output_path, stems, bpm, project_audio_dir,
             set_track_output_external(lines, audio_ref[tidx])
         elif cat == "bus":
             set_track_muted(lines, audio_ref[tidx])
+            set_track_output_main(lines, audio_ref[tidx])
+        else:
+            # Never inherit a stale External/Group route from a template slot.
+            # _apply_track_groups below changes grouped children to GroupTrack.
+            set_track_output_main(lines, audio_ref[tidx])
         # Generic per-track mute (e.g. an updated A/B stem sitting live in a group).
         if stem.get("muted") and cat not in ("reference", "bus"):
             set_track_muted(lines, audio_ref[tidx])
