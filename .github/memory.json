@@ -381,6 +381,36 @@
         "Fix routing assignment and add a validator hard-fail for any non-reference working track routed to AudioOut/External.",
         "Batch SNAG-001 and SNAG-002 into a future Studio App update when ready."
       ]
+    },
+    {
+      "date": "2026-07-29",
+      "summary": "Closed every open snag (SNAG-001 through SNAG-005) and shipped six releases in one day, v0.1.1 through v0.1.6 -- the version count reflects genuine bugs caught live at each step, not scope creep. (1) SNAG-002 fixed by Codex (three real routing-safety contributors) + .rar stem-pack ingest support added; SNAG-001 mitigated (a silent no-onset-correction fallback now surfaces which version needs a manual check, root placement math was never actually broken). (2) SNAG-003: mined 147+ real finished projects as ground truth and found a bare 'chop' stem is a VOCAL for Sam, not music as SNAG-002's own ground truth had guessed; classifier agreement 88.9% -> 91.6%. (3) Released v0.1.1 bundling all of the above, then Sam tested the Update button live and found it looked broken even though the file swap actually worked -- SNAG-004: the swap ran fully invisibly with zero success/failure feedback. Fixed with a visible 'Installing...' window, a bounded 30s retry, and a result marker the app reads on next launch to report the real outcome plainly. v0.1.2 had a self-introduced bug in this exact fix (an unescaped '>' in the new console's title line made cmd.exe silently create a stray file) -- caught only by actually EXECUTING the generated script against a throwaway target, not by reading it; v0.1.3 fixed it. (4) Rolled v0.1.3 out to other engineers' machines: 2 of 3 updated cleanly, the third hit SNAG-005 (CERTIFICATE_VERIFY_FAILED -- that machine's own stale local cert store). Fixed with a bundled certifi fallback. Publishing THAT fix (v0.1.4) itself silently failed: build_exe.py's copy-into-place step reported success even though every retry had failed (a locked destination file), shipping the OLD binary under a new version number undetected until the published file was hash-checked directly. Fixed build_exe.py to verify the actual copy before reporting success (v0.1.5). Sam then asked for an independent Codex review of both SNAG-005 fixes, which found two more real, narrow issues (the SSL-fallback trigger was broader than intended; the build-verification check gated on the wrong signal) -- both fixed and re-verified, shipped as v0.1.6, the current release. Also banked 4 global (all-project) process refinements to Claude Code Brain/CLAUDE.md and the peer-comms-headless skill: scope peer briefs narrowly rather than open-ended; explicitly check for offloadable mechanical work after diagnosing solo; don't block a turn synchronously waiting on a peer's reply, background it; proactively loop in a Codex review on security-relevant code rather than waiting to be asked.",
+      "files_changed": [
+        "Source/stem_classifier.py",
+        "Source/project_builder.py",
+        "Source/als_patcher.py",
+        "Source/validate_project.py",
+        "Studio App/updater.py",
+        "Studio App/build_exe.py",
+        "Studio App/engine_api.py",
+        "Studio App/Web/app.js",
+        "Studio App/VERSION",
+        "Tests/test_classifier_ground_truth.py",
+        "Tests/test_external_routing.py",
+        "Tests/test_updater.py",
+        "Tests/test_multiversion_alignment.py",
+        "Tests/test_multiversion_alignment_flag.py (new)",
+        "Documentation/Snag List.md",
+        "Documentation/AI_CONTEXT.md",
+        "Documentation/TOOLBOX.md",
+        ".github/memory.json",
+        ".github/ai-activity-log.md"
+      ],
+      "pending": [
+        "Sam: confirm the last engineer machine(s) land cleanly on v0.1.6.",
+        "Snag List is currently empty of open items -- add anything new that turns up from real use.",
+        "RF64/WAVE64 (>4GB WAV) support and deep-nesting classification's low-priority regex edge case remain deliberately deferred (unchanged from earlier sessions)."
+      ]
     }
   ],
   "decisions": [

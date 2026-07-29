@@ -44,104 +44,39 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 ## Current State
 
-**v0.1.6 released (2026-07-29) — SNAG-005 refined after a Codex review.**
-Sam asked for an independent check of the v0.1.5 certifi/build fixes below;
-Codex found two real, narrow issues: (1) the SSL-fallback trigger was
-`isinstance(exc.reason, ssl.SSLError)` — broader than intended, since it
-would also retry genuine protocol/connection TLS failures a CA-bundle swap
-can't fix, potentially masking the real error; narrowed to
-`ssl.SSLCertVerificationError` specifically. (2) `build_exe.py`'s copy
-verification gated success on the `copy2()` call itself succeeding, but
-`copy2` can raise on the metadata-copy step even after the data already
-copied correctly, which could misreport a fine copy as failed; switched to
-hashing the actual destination content against the source instead — also
-closes a same-size-different-content false-pass gap. Certificate
-verification itself was confirmed never weakened (certifi context still
-fully verifies) and non-SSL failures still confirmed to propagate rather
-than being swallowed. Full detail: [Snag List.md](Snag%20List.md).
+**2026-07-29 — all open snags closed + update mechanism hardened, v0.1.0 → v0.1.6.**
+Continuing from the v0.1.0 ship (2026-07-14): closed both open snags (SNAG-001
+mitigated, SNAG-002 fixed) + the .rar ingest bug, then found and fixed three MORE
+real bugs live through the process of actually shipping and testing each fix —
+this is the whole reason the version climbed to v0.1.6 in one day, not scope creep.
 
-**v0.1.5 released (2026-07-29) — SNAG-005, one machine couldn't reach the
-update repo.** Rolling v0.1.3 out to other engineers' machines: 2 of 3 updated
-cleanly, the third failed with `CERTIFICATE_VERIFY_FAILED` (that machine's own
-local trusted-certificate store, not a code bug — same build, only one
-machine hit it). Fix: the app now bundles its own certificate root bundle
-(`certifi`) and retries through it automatically if the host machine's own
-store can't verify GitHub's connection. Separately caught a real
-build-tooling bug this surfaced: v0.1.4 was meant to ship this fix but
-`build_exe.py`'s copy-into-place step silently reported success even though
-every retry had failed (something else had the destination file locked) —
-the OLD binary shipped under the new version number, unnoticed until the
-published file was hash-checked directly. `build_exe.py` now verifies the
-copy actually landed before reporting success. Full detail:
-[Snag List.md](Snag%20List.md).
+- **SNAG-003** — a bare "chop" stem defaults to **vocals** for Sam (mined 147+ real
+  projects as ground truth), not music as SNAG-002's own ground truth had guessed.
+  Classifier agreement **88.9% → 91.6%**.
+- **SNAG-004** — the Update button's file-swap genuinely worked but ran invisibly
+  with zero success/failure confirmation, so a correct update looked identical to
+  a broken one. Now shows a visible "Installing..." window and reports the outcome
+  plainly on next launch. (v0.1.2 had a self-introduced bug in this same fix — a
+  batch-script redirect typo silently created a stray file — caught only by
+  actually RUNNING the script, not reading it; v0.1.3 fixed it.)
+- **SNAG-005** — one of three engineers' machines failed to update with a
+  certificate-verification error (that machine's stale local cert store, not a
+  code bug — the other two updated fine on the identical build). Fixed with a
+  bundled, independently-maintained certificate bundle as an automatic fallback.
+  Publishing THIS fix (v0.1.4) itself silently failed — a real bug in the
+  release-build script reported success even though the copy-into-place step
+  never actually completed, shipping a stale binary under a new version number;
+  caught only by hash-checking the published file directly, not trusting the
+  build script's own claim. Fixed the build script to verify properly (v0.1.5). A
+  Codex review (Sam asked for it) then found two further real refinements to
+  both fixes, applied in **v0.1.6 — the current release**.
 
-**v0.1.3 released (2026-07-29) — SNAG-004, the update mechanism itself.**
-Testing v0.1.1's Update button live turned up a real bug: the swap (close old
-app -> background script waits for the file to unlock -> replace -> reopen)
-actually worked, confirmed byte-for-byte via sha256 mid-investigation, but ran
-fully invisibly with no console and no success/failure confirmation — so a
-correct update looked exactly like a broken one. Fixed: the swap now runs in a
-visible "Installing..." window, the retry loop is capped at 30s instead of
-looping forever, and the app reports the outcome plainly on its next launch
-either way ("Updated to vX.X.X" / "Update didn't install: <reason>"). v0.1.2
-shipped the same day with a bug in this same fix (an unescaped `>` in the new
-window's title line made cmd.exe silently create a stray file) — caught only
-by actually RUNNING the generated script for real, not just reading its text;
-v0.1.3 supersedes it. Full detail: [Snag List.md](Snag%20List.md).
-
-**v0.1.1 released (2026-07-29).** Bumped, built, and published to the private
-`Willzy14/StemToAbleton-Releases` repo — bundles SNAG-001/002/003 + the .rar
-ingest fix. Existing v0.1.0 installs pick it up via the in-app Update button
-(GitHub Releases + baked read-only token, see `Studio App/updater.py`).
-
-**SNAG-003 fixed — bare "chop" is a vocal, not a music, stem (2026-07-29, Claude).** Sam
-reported a real project (Wyn Starks - COCO — the same one used as SNAG-002's ground truth,
-built before that fix landed) with a vocal chop + two drum loops parked muted at the bottom.
-The loops were already covered by SNAG-002; the chop wasn't — SNAG-002's own ground truth had
-guessed bare "chop" = music, and Sam corrected that. Rather than guess again, mined every
-chop/chops clip across Sam's full 147+ project history: every bare "Chop"/"Chops" with no
-instrument attached (incl. one literally named just "CHOP") was coloured vocals in his real
-work; only an explicit instrument name ("Guitar Chop") was ever music. Moved bare-chop into
-the guarded weak-vocal-signal check (same mechanism as hook/topline/throw) so a real
-instrument still overrides it, and fixed a related tokenising gap the mining surfaced
-("24guitar" — a digit glued straight onto a word — wasn't recognised as "guitar" at all).
-Classifier agreement against Sam's real corpus: **88.9% → 91.6%**. Full detail:
-[Snag List.md](Snag%20List.md). Sam must rebuild the COCO project (and any pack with a bare
-chop stem) to pick this up.
-
-**SNAG-001 mitigated (2026-07-29, Claude).** The original hypothesis (both mine and the
-peers') was wrong: the primary/base version does NOT get placed at a fixed uncorrected
-offset — `_detect_version_stack_anchor_sec` already runs identically for every version. The
-real gap: when nothing in any of its 3 buckets confidently locks a BPM, it silently falls
-back to no onset correction, and nothing surfaced that this happened. Fixed the silence, not
-the placement math (which was never actually broken): `_version_stack_anchor` now returns
-`(anchor_sec, confident)`, and the multi-version report flags exactly which version's kick
-couldn't be confidently grid-locked, so Sam knows which one to check before opening — rather
-than silently maybe needing a manual nudge with no clue which track. New tests prove the flag
-reaches the real report end-to-end and a confidently-locking version isn't flagged; both real
-M1-harness fixtures rebuild byte-identical (purely additive for the common case). Full detail:
-[Snag List.md](Snag%20List.md). **Also landed:** a global guard in the shared
-`minimax-ask.ps1` helper (refuses with a clear error instead of silently running a
-file-dependent brief in a tool-less empty-directory sandbox) + a matching `/peer-comms-headless`
-skill-doc fix, after exactly that mistake wasted a MiniMax call earlier this session.
-
-**SNAG-002 fixed + .rar stem-pack support (2026-07-29, Claude + Codex).** Sam hit a real ingest
-failure ("Slot Machine STEMS.rar" → baffling "no usable rhythmic stem" BPM error) — the Studio
-App only ever extracted `.zip`, so a `.rar` silently matched no branch and the build saw zero
-stems. Fixed: `.rar` support via WinRAR/7-Zip (whichever is on the machine), mirroring the `.zip`
-code paths exactly, same zip-slip safety guard, and a clear actionable error if no extractor is
-installed. Verified end-to-end against the real file (11 stems, builds a 12-track project).
-**SNAG-002 (below) is now 🟢 fixed** — Codex (high effort, `/peer-comms-headless`, workspace-write)
-investigated and found THREE independent real contributors, all fixed: (1) `REFERENCE_PATTERNS`'
-"2MIX" regex matched anywhere in a filename, sweeping every stem in a `2MIX`-export-tagged pack
-into "reference" (confirmed against the two real affected projects' actual filenames); (2) the
-numpy full-mix safety net also ran on filename-confident `music` stems, letting a loud/dense synth
-get second-guessed into a reference; (3) every non-reference/non-bus working track is now
-EXPLICITLY routed to Main (`set_track_output_main`), not trusting a reused template slot's prior
-routing. `validate_project.py` now hard-fails on any working track routed to Ext. Out. Claude
-independently re-reviewed the diff line-by-line and re-ran the full suite (not just Codex's
-self-report) before committing: 28/28. Full detail: [Snag List.md](Snag%20List.md). SNAG-001
-(Extended-mix clip lands off-grid) is next, handed to MiniMax to keep Claude usage low.
+Full blow-by-blow (root causes, exact fixes, test coverage) is in
+[Snag List.md](Snag%20List.md); full suite 30/30 throughout. Also banked 4 global
+process refinements this session, not project-specific — scope peer briefs
+narrowly rather than open-ended; check for offloadable mechanical work after
+diagnosing solo; don't block a turn on a peer's reply, background the wait; loop
+in Codex proactively on security-relevant code rather than waiting to be asked.
 
 **Snag update (2026-07-17):** **SNAG-002** records a high-severity, silent export issue observed across two real projects: one then five normal working tracks were routed to External Out and bypassed Main/Master, so were missing from the final master. The eventual fix must add a validator hard-fail for any non-reference track routed to `AudioOut/External`.
 **SHIPPED v0.1.0 — packaged, branded, self-updating EXE (2026-07-14, Claude).** The Studio App is now a distributable Windows EXE, sent to Sam's machines and **running real jobs** (multiple packs built + opened in Ableton, look/sound right). Landed this session: **(1) Private auto-update, end-to-end.** `updater.py` targets a PRIVATE releases repo (`Willzy14/StemToAbleton-Releases`) with a baked **read-only fine-grained PAT** (Bearer auth; strips the auth header on the signed-asset 302; sha256 parsed from the release body). `build_exe.py` bakes the token from a gitignored `release_token.local` into the bundled `update_feed.json` at build time (never committed). `publish_release.py` cuts a `gh release` at the current VERSION with the EXE + sha256 using Sam's own `gh` login (no publish token baked). Token created + verified (HTTP 200 read of the private repo), **v0.1.0 baseline release published**, and the app's exact update path validated live (baked token → `/releases/latest` → HTTP 200, tag `v0.1.0`, asset 25 MB, sha256 == the built EXE). **Hard rule (Sam): the tool must NOT be publicly downloadable** — so BOTH the source repo and the releases repo are private; the baked token is read-only + revocable. **(2) Custom app icon + UI cohesion** — a blended Wired Masters monogram + Ableton clip-strip on a dark rounded tile (`Assets/AppIcon.ico`, multi-res 16–256px) set as the EXE `--icon`; the UI header shows the matching monogram tile (`Web/assets/brand_tile.png`) at **64px** so the running app reads as one identity with its taskbar icon. **(3) WebView2 = lean, not bundled** — the 25 MB EXE relies on the machine's own WebView2 (all Sam's machines have it) with the in-app preflight warning + installer prompt as the clean-machine backstop; bundling the ~150 MB Fixed-Version runtime was rejected as not worth the size for Sam's fleet. **Now in snag-collection:** post-ship issues go in [Snag List.md](<Snag List.md>) and are **batched into one update, not a release per bug** (Sam's policy). Open: **SNAG-001** — on an Extended+Radio-edit pack the BPM was correct and the Radio edit landed on grid, but the Extended mix was slightly off grid (low, non-blocking). **Still Sam-side:** a clean-machine smoke test (first run / folder+zip build / forced-fail recovery / updater swap+relaunch / open the `.als`). Taskbar pin on Win11 = run the EXE, then right-click its live taskbar icon → Pin to taskbar (loose `.exe`s don't expose it directly).
@@ -258,8 +193,8 @@ Suite is 17/17 across all four fixes. Housekeeping: removed two stray `AI_CONTEX
 ## What's Next
 
 ### ⭐ Priority order
-- **NEXT — Sam: clean-machine smoke test of the shipped EXE** — on a fresh box / the home PC: first run (WebView2 preflight fires if it's missing), build a folder pack + a zip pack, force a worker failure and hit the card's "Try again", click ⟳ Update once to watch the swap+relaunch, and open a built `.als`. The last box before the tool is fully proven in the wild.
-- **Triage the snag list** — work [Snag List.md](<Snag List.md>) when a batch is worth shipping (first entry: SNAG-001, Extended-mix off-grid). Batch fixes into one release, never per-bug (Sam's policy). To repro SNAG-001, get one real Extended+Radio project folder from Sam.
+- ~~**Clean-machine smoke test**~~ **DONE, for real (2026-07-29)** — not a synthetic test: Sam actually rolled v0.1.3 out to other engineers' machines. 2 of 3 updated cleanly; the third hit a real cert-store issue, fixed (see Current State, SNAG-005). **NEXT — Sam: confirm the last machine(s) land on v0.1.6.**
+- ~~**Triage the snag list**~~ **DONE (2026-07-29)** — SNAG-001 through SNAG-005 are all fixed/mitigated and shipped. [Snag List.md](<Snag List.md>) is currently empty of open items; it's the place to add anything new that turns up.
 0. **Kick Detector V3 in real builds** — wired and enabled locally on `STUDIO-2`; next useful check is one normal Studio App/CLI build with auto-BPM and a real stem pack, then open in Ableton to eyeball the grid.
 1. ~~**Sam: run the Studio App**~~ **DONE (2026-07-14)** — Sam has run the shipped EXE on real jobs; core flow (colour profiles, build, open-in-Ableton), branding + the 64px header logo all confirmed. Any residual UI nits now go to the snag list rather than this checklist.
 2. ~~**Build nested sub-groups**~~ **DONE (2026-06-30/07-01)** — engine + Studio App toggle; now applied to the **multi-version path** too (2026-07-01). Only remaining follow-up: none.
