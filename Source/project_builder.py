@@ -575,13 +575,19 @@ def _detect_version_alignment_sec(mix_stems):
     return 0.0
 
 
-def _detect_version_stack_anchor_sec(mix_stems, project_bpm):
-    """Find the source-time downbeat used as the start of a later version stack.
+def _version_stack_anchor(mix_stems, project_bpm):
+    """Find the source-time downbeat used as the start of a version's stack.
 
     Prefer the earliest kick-layer onset that agrees with the project BPM. This
     keeps stacks together while avoiding the dry-kick-only problem: in Fallon the
     dry kick enters much later, but the processed kick layer marks the radio
     edit's musical start.
+
+    Returns (anchor_sec, confident). confident=False means NOTHING in any bucket
+    passed the confidence gates, so the caller fell back to 0.0 (no correction) --
+    that version's placement wasn't verified against its own audio and may drift
+    a little off-grid (SNAG-001: this happened silently, with no way to tell which
+    version needed a manual nudge before opening the project).
     """
     def _is_named_kick(stem):
         return "kick" in stem["file_path"].stem.lower()
@@ -613,8 +619,13 @@ def _detect_version_stack_anchor_sec(mix_stems, project_bpm):
                 continue
             candidates.append(_version_alignment_sec(result))
         if candidates:
-            return min(candidates)
-    return 0.0
+            return min(candidates), True
+    return 0.0, False
+
+
+def _detect_version_stack_anchor_sec(mix_stems, project_bpm):
+    """Backward-compatible float-only wrapper around _version_stack_anchor."""
+    return _version_stack_anchor(mix_stems, project_bpm)[0]
 
 
 def _next_phrase_boundary(beat, phrase_bars=32):
@@ -1890,7 +1901,8 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
             for (_rs, _re) in (s["regions"] or []):
                 max_end = max(max_end, _re)
         p["length_beats"] = (max_end / 60.0) * bpm
-        p["first_beat_sec"] = _detect_version_stack_anchor_sec(p["mix"] + p["buses"], bpm)
+        p["first_beat_sec"], p["anchor_confident"] = _version_stack_anchor(
+            p["mix"] + p["buses"], bpm)
 
     def _version_label(k):
         p = pv[k]
@@ -1924,6 +1936,14 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
             if k == 0 and len(pv) == 1
             else _next_phrase_boundary(next_start)
         )
+
+    # SNAG-001: a version whose kick-grid anchor couldn't be confidently detected
+    # (no candidate stem passed the confidence gates in any bucket) is placed with
+    # NO onset correction — it can land a hair off-grid with no signal that it
+    # happened. Flag it so it's checked before opening the project, rather than
+    # discovered by ear afterwards.
+    low_confidence_versions = [_version_label(k) for k, p in enumerate(pv)
+                               if not p.get("anchor_confident", True)]
 
     primary = pv[0]
     for s in primary["mix"]:
@@ -2195,7 +2215,12 @@ def build_multiversion_project(versions, artist, title, label, bpm, output_base,
                   + _analysis_off_flags() + als_flags
                   + ([str(len(leftover_names)) + " file(s) weren't matched to a "
                       "version — parked muted at the bottom for you to place: "
-                      + ", ".join(leftover_names)] if leftover_names else [])),
+                      + ", ".join(leftover_names)] if leftover_names else [])
+                  + (["Couldn't confidently grid-lock the kick for: "
+                      + ", ".join(low_confidence_versions)
+                      + " — that version's clip start wasn't verified against its "
+                      "own audio and may sit a little off-grid; check it."]
+                     if low_confidence_versions else [])),
         "multiversion": True,
         "versions": [p["name"] for p in pv],
     }

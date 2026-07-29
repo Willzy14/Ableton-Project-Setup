@@ -109,6 +109,33 @@ def test_next_version_starts_on_next_32_bar_phrase_boundary():
     assert project_builder._next_phrase_boundary(960.145850340136) == 1024
 
 
+def test_version_stack_anchor_reports_confidence():
+    """SNAG-001: when a candidate passes the confidence gates, confident=True;
+    when NOTHING in any bucket does, confident=False (the caller must know this
+    happened, since a False result means the version's placement got no onset
+    correction at all -- see the low-confidence flag this now feeds)."""
+    originals = {"detect_bpm": project_builder.detect_bpm}
+    confident_kick = Path("Kick.wav")
+    fake_results = {
+        confident_kick: {
+            "bpm_rounded": 128, "first_actual_onset_sec": 1.41,
+            "n_onsets": 214, "n_inliers": 127, "residual_ms": 10.15,
+        },
+    }
+    project_builder.detect_bpm = lambda path: fake_results.get(path)
+    try:
+        anchor, confident = project_builder._version_stack_anchor(
+            [{"category": "kick", "file_path": confident_kick}], project_bpm=128)
+        assert (anchor, confident) == (1.41, True)
+
+        # No stem matches any bucket at all -> nothing to even attempt detect_bpm on.
+        anchor2, confident2 = project_builder._version_stack_anchor(
+            [{"category": "vocals", "file_path": Path("Vox.wav")}], project_bpm=128)
+        assert (anchor2, confident2) == (0.0, False)
+    finally:
+        project_builder.detect_bpm = originals["detect_bpm"]
+
+
 def test_multiversion_build_anchor_can_use_detected_buses():
     originals = {"_detect_version_stack_anchor_sec": project_builder._detect_version_stack_anchor_sec}
     calls = []
@@ -136,5 +163,6 @@ if __name__ == "__main__":
     test_multiversion_alignment_uses_cleanest_kick_candidate()
     test_multiversion_stack_anchor_uses_earliest_kick_layer()
     test_next_version_starts_on_next_32_bar_phrase_boundary()
+    test_version_stack_anchor_reports_confidence()
     test_multiversion_build_anchor_can_use_detected_buses()
     print("multi-version alignment tests passed")

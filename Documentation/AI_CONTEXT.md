@@ -44,6 +44,22 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 ## Current State
 
+**SNAG-001 mitigated (2026-07-29, Claude).** The original hypothesis (both mine and the
+peers') was wrong: the primary/base version does NOT get placed at a fixed uncorrected
+offset — `_detect_version_stack_anchor_sec` already runs identically for every version. The
+real gap: when nothing in any of its 3 buckets confidently locks a BPM, it silently falls
+back to no onset correction, and nothing surfaced that this happened. Fixed the silence, not
+the placement math (which was never actually broken): `_version_stack_anchor` now returns
+`(anchor_sec, confident)`, and the multi-version report flags exactly which version's kick
+couldn't be confidently grid-locked, so Sam knows which one to check before opening — rather
+than silently maybe needing a manual nudge with no clue which track. New tests prove the flag
+reaches the real report end-to-end and a confidently-locking version isn't flagged; both real
+M1-harness fixtures rebuild byte-identical (purely additive for the common case). Full detail:
+[Snag List.md](Snag%20List.md). **Also landed:** a global guard in the shared
+`minimax-ask.ps1` helper (refuses with a clear error instead of silently running a
+file-dependent brief in a tool-less empty-directory sandbox) + a matching `/peer-comms-headless`
+skill-doc fix, after exactly that mistake wasted a MiniMax call earlier this session.
+
 **SNAG-002 fixed + .rar stem-pack support (2026-07-29, Claude + Codex).** Sam hit a real ingest
 failure ("Slot Machine STEMS.rar" → baffling "no usable rhythmic stem" BPM error) — the Studio
 App only ever extracted `.zip`, so a `.rar` silently matched no branch and the build saw zero
