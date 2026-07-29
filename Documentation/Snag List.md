@@ -7,14 +7,14 @@ cutting a release per bug. Newest first.
 **Status key:** 🔴 open · 🟡 investigating · 🟢 fixed (note the release, e.g. `fixed v0.1.1`)
 
 Baseline in the wild: **v0.1.0** (first distribution, 2026-07-14).
-Current release: **v0.1.5** (2026-07-29) — SNAG-001 through SNAG-005 + the .rar
+Current release: **v0.1.6** (2026-07-29) — SNAG-001 through SNAG-005 + the .rar
 ingest fix. Click Update in the app to pick it up.
 
 ---
 
 ## SNAG-005 — Update check failed on one machine (bad local certificate store)
-- **Status:** 🟢 fixed v0.1.5 (v0.1.4 was meant to ship this fix but didn't — see
-  the build-tooling bug below)
+- **Status:** 🟢 fixed v0.1.6 (v0.1.4 was meant to ship this fix but didn't, and
+  v0.1.5 had two smaller issues a review caught — see below)
 - **Found:** 2026-07-29, Sam rolling v0.1.3 out to other engineers' machines — 2
   of 3 updated cleanly; the third failed with `Update couldn't reach the update
   repo: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify
@@ -46,8 +46,26 @@ ingest fix. Click Update in the app to pick it up.
   build end-to-end and hash/byte-size-verifying the published artifact — the
   same real-execution standard as SNAG-004, not just a code read-through. Full
   suite 30/30.
-- **Reviewed by Codex** (independent check of the certifi fallback + the
-  build-verification fix) — see the addendum below once complete.
+- **Reviewed by Codex** (Sam asked for an independent check of the certifi
+  fallback + the build-verification fix): found two real, narrow issues, both
+  fixed in v0.1.6 —
+  1. The retry trigger (`isinstance(exc.reason, ssl.SSLError)`) was broader
+     than intended — it would also retry genuine protocol/connection-level TLS
+     failures (e.g. `SSLEOFError`) that swapping the CA bundle can't fix,
+     risking a real error getting masked by a less informative retry error.
+     Narrowed to `ssl.SSLCertVerificationError` specifically.
+  2. `build_exe.py`'s copy-verification (the fix for the bug just above) was
+     gating success on the `copy2()` call itself succeeding — but `copy2` can
+     raise while copying file *metadata* even after the actual data already
+     copied correctly, which would misreport a genuinely-fine copy as failed.
+     Switched to comparing a sha256 hash of the actual destination content
+     against the source, which is what actually matters, and closes a second
+     narrow gap (a same-size-but-different-content false pass) at the same
+     time.
+  Confirmed sound otherwise: certificate verification itself was never
+  weakened (the certifi context still fully verifies, just from a different
+  trusted root bundle), and a non-SSL failure (auth, DNS, network-down) was
+  confirmed to still propagate rather than being swallowed.
 
 ---
 

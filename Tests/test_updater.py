@@ -118,6 +118,30 @@ def test_api_get_retries_with_certifi_on_cert_verify_failure():
     assert calls[1] is not None        # retry: explicit certifi-backed context
 
 
+def test_api_get_does_not_retry_non_cert_ssl_errors():
+    # Codex review (2026-07-29): matching the broad ssl.SSLError would also
+    # retry protocol/connection-level TLS failures (SSLEOFError etc.) that a
+    # different CA bundle can't fix, silently replacing a real error with a
+    # less informative one. Only ssl.SSLCertVerificationError should retry.
+    calls = []
+
+    def fake_fetch(url, headers, ssl_context=None):
+        calls.append(ssl_context)
+        raise urllib.error.URLError(ssl.SSLEOFError("EOF occurred in violation of protocol"))
+
+    orig = updater._fetch
+    try:
+        updater._fetch = fake_fetch
+        try:
+            updater._api_get("https://api.github.com/x", "tok")
+            assert False, "expected the SSLEOFError to propagate, not be retried"
+        except urllib.error.URLError:
+            pass
+    finally:
+        updater._fetch = orig
+    assert len(calls) == 1, "a non-cert SSL error must not trigger the certifi retry"
+
+
 def test_api_get_does_not_mask_non_ssl_errors():
     def fake_fetch(url, headers, ssl_context=None):
         raise urllib.error.URLError("connection refused")

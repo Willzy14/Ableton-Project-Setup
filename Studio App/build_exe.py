@@ -17,6 +17,7 @@ RELEASE ORDER (important — the EXE bakes in the current VERSION at build time)
      current VERSION — do NOT --bump here, or latest.json would advertise a
      version newer than the EXE and the app would self-update in a loop).
 """
+import hashlib
 import json
 import os
 import shutil
@@ -37,6 +38,14 @@ SEP = ";"  # Windows --add-data separator (src;dest)
 # Local, gitignored build inputs (never committed):
 RELEASE_TOKEN_FILE = APP_DIR / "release_token.local"   # the fine-grained read-only PAT
 WEBVIEW2_DIR = APP_DIR / "webview2_runtime"            # extracted WebView2 Fixed Version runtime
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _release_token():
@@ -157,14 +166,12 @@ def main():
         shutil.rmtree(build_root, ignore_errors=True)
         return 1
 
-    built_size = built.stat().st_size
+    built_hash = _sha256(built)
     final.parent.mkdir(parents=True, exist_ok=True)
     import time
-    copied = False
     for attempt in range(8):          # a completed-file copy; retry a Dropbox lock
         try:
             shutil.copy2(built, final)
-            copied = True
             break
         except PermissionError:
             time.sleep(1.0)
@@ -176,8 +183,13 @@ def main():
     # running had dist/ locked for the whole retry window; every attempt
     # failed, and a release got published under a NEW version number with the
     # OLD, unfixed binary, unnoticed until the built file was hash-checked by
-    # hand). Verify the destination actually matches what was just built.
-    if not copied or not final.exists() or final.stat().st_size != built_size:
+    # hand). Verify the ACTUAL destination content against what was just
+    # built — not just whether copy2() returned cleanly, which a Codex review
+    # of the first version of this fix flagged as its own false-failure risk
+    # (copy2 can raise while copying metadata AFTER the data is already
+    # correctly written) — and hash rather than just size, closing the
+    # (admittedly remote) chance of a same-size mismatch too.
+    if not final.exists() or _sha256(final) != built_hash:
         print("\nFAILED to copy the built EXE into " + str(final) + " — it's "
               "probably still open in another process (close every "
               "Stem -> Ableton window and re-run) or Dropbox has it locked. "

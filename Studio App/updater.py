@@ -163,7 +163,11 @@ def _api_get(url, token, accept="application/vnd.github+json"):
     try:
         return _fetch(url, headers)
     except urllib.error.URLError as exc:
-        if certifi is not None and isinstance(exc.reason, ssl.SSLError):
+        # Narrowly SSLCertVerificationError, not the broader SSLError — a
+        # protocol/connection-level TLS failure (SSLEOFError etc.) wouldn't be
+        # fixed by swapping the CA bundle, and retrying it just risks masking
+        # the real error with a less informative one (Codex review, 2026-07-29).
+        if certifi is not None and isinstance(exc.reason, ssl.SSLCertVerificationError):
             return _fetch(url, headers, ssl.create_default_context(cafile=certifi.where()))
         raise
 

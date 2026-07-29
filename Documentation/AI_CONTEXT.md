@@ -44,6 +44,22 @@ Pure-stdlib — no `pip install` required. Standalone BPM check:
 
 ## Current State
 
+**v0.1.6 released (2026-07-29) — SNAG-005 refined after a Codex review.**
+Sam asked for an independent check of the v0.1.5 certifi/build fixes below;
+Codex found two real, narrow issues: (1) the SSL-fallback trigger was
+`isinstance(exc.reason, ssl.SSLError)` — broader than intended, since it
+would also retry genuine protocol/connection TLS failures a CA-bundle swap
+can't fix, potentially masking the real error; narrowed to
+`ssl.SSLCertVerificationError` specifically. (2) `build_exe.py`'s copy
+verification gated success on the `copy2()` call itself succeeding, but
+`copy2` can raise on the metadata-copy step even after the data already
+copied correctly, which could misreport a fine copy as failed; switched to
+hashing the actual destination content against the source instead — also
+closes a same-size-different-content false-pass gap. Certificate
+verification itself was confirmed never weakened (certifi context still
+fully verifies) and non-SSL failures still confirmed to propagate rather
+than being swallowed. Full detail: [Snag List.md](Snag%20List.md).
+
 **v0.1.5 released (2026-07-29) — SNAG-005, one machine couldn't reach the
 update repo.** Rolling v0.1.3 out to other engineers' machines: 2 of 3 updated
 cleanly, the third failed with `CERTIFICATE_VERIFY_FAILED` (that machine's own
