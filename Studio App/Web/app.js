@@ -283,7 +283,7 @@ function renderCard(proj) {
        <div class="dz-sub">${busy ? "building…" : "click to change"}</div>`
     : `<div class="dz-icon">⬇</div>
        <div class="dz-main">Drop stems here</div>
-       <div class="dz-sub">folder, WAV / AIFF, or .zip — click to browse</div>`;
+       <div class="dz-sub">folder, WAV / AIFF, .zip, or .rar — click to browse</div>`;
   // Lock ingest while this card is building; otherwise wire the picker + drop.
   if (!busy) {
     dz.onclick = () => choosePaths(proj.id);

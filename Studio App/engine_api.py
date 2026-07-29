@@ -188,7 +188,7 @@ def _title_from_paths(paths):
     p0 = Path(paths[0])
     if p0.is_dir() or not p0.suffix:      # a folder (extension-less) name
         base = p0.name
-    elif p0.suffix.lower() == ".zip":
+    elif p0.suffix.lower() in (".zip", ".rar"):
         base = p0.stem
     else:
         base = p0.parent.name             # loose file(s) -> their folder
@@ -300,6 +300,78 @@ def _safe_extract(zf, dest):
         # else: escapes dest — silently skip the malicious entry
 
 
+def _find_rar_extractor():
+    """Locate an executable that can extract a .rar. Prefers unrar (bundled with
+    WinRAR), falls back to 7-Zip's CLI. Returns (exe_path, kind) or (None, None)
+    if neither is installed on this machine."""
+    for c in (shutil.which("unrar"), shutil.which("UnRAR"),
+              r"C:\Program Files\WinRAR\UnRAR.exe",
+              r"C:\Program Files (x86)\WinRAR\UnRAR.exe"):
+        if c and Path(c).exists():
+            return c, "unrar"
+    for c in (shutil.which("7z"), shutil.which("7za"),
+              r"C:\Program Files\7-Zip\7z.exe",
+              r"C:\Program Files (x86)\7-Zip\7z.exe"):
+        if c and Path(c).exists():
+            return c, "7z"
+    return None, None
+
+
+def _rar_entry_names(exe, kind, rar_path):
+    """List the archive's entry paths (used for a zip-slip safety check)."""
+    if kind == "unrar":
+        cmd = [exe, "lb", "-y", str(rar_path)]
+    else:
+        cmd = [exe, "l", "-slt", str(rar_path)]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        raise ValueError("Could not read the .rar contents: "
+                         + (out.stderr or out.stdout or "unknown error").strip()[:300])
+    if kind == "unrar":
+        return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
+    return [ln.split("=", 1)[1].strip() for ln in out.stdout.splitlines()
+           if ln.startswith("Path = ")]
+
+
+def _extract_rar(rar_path, dest):
+    """Extract a .rar via WinRAR's unrar or 7-Zip (whichever is on the machine).
+
+    Lists entries first and only extracts the ones that resolve INSIDE dest (the
+    RAR equivalent of _safe_extract's zip-slip guard) — a malformed/malicious
+    entry is skipped, not written, same as the zip path. Raises a clear,
+    actionable ValueError if no extractor is installed, rather than silently
+    producing an empty folder (which used to surface as a baffling "no usable
+    rhythmic stem" BPM error with no clue the .rar was never opened).
+    """
+    exe, kind = _find_rar_extractor()
+    if not exe:
+        raise ValueError(
+            "This pack is a .rar archive, but no RAR extractor was found on this "
+            "machine (WinRAR / UnRAR / 7-Zip). Extract it yourself — right-click "
+            "the .rar and choose Extract Here — then drop the extracted folder "
+            "in instead, or install WinRAR/7-Zip and try again.")
+    rar_path = Path(rar_path)
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    dest_resolved = dest.resolve()
+    names = _rar_entry_names(exe, kind, rar_path)
+    safe = [n for n in names
+           if (dest_resolved / n.replace("\\", "/")).resolve() == dest_resolved
+           or dest_resolved in (dest_resolved / n.replace("\\", "/")).resolve().parents]
+    if not safe:
+        raise ValueError("Couldn't extract " + rar_path.name
+                         + " — every entry in it would land outside the "
+                         "destination folder. This looks like a malformed archive.")
+    if kind == "unrar":
+        cmd = [exe, "x", "-y", str(rar_path)] + safe + [str(dest) + os.sep]
+    else:
+        cmd = [exe, "x", str(rar_path), "-o" + str(dest), "-y"] + safe
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    if result.returncode != 0:
+        raise ValueError("Couldn't extract the .rar: "
+                         + (result.stderr or result.stdout or "unknown error").strip()[:400])
+
+
 def prepare_stem_folder(paths, workdir):
     """Resolve dropped path(s) into ONE folder for the engine to scan.
 
@@ -324,6 +396,12 @@ def prepare_stem_folder(paths, workdir):
             _safe_extract(z, ex)
         return _find_audio_root(ex)
 
+    # Single .rar: same treatment as .zip.
+    if len(paths) == 1 and paths[0].suffix.lower() == ".rar":
+        ex = Path(workdir)
+        _extract_rar(paths[0], ex)
+        return _find_audio_root(ex)
+
     # Otherwise: loose files / multiple inputs — flatten into one staged folder.
     staged = Path(workdir)
     staged.mkdir(parents=True, exist_ok=True)
@@ -340,6 +418,11 @@ def prepare_stem_folder(paths, workdir):
             ex = Path(tempfile.mkdtemp(prefix="_zip_"))   # outside staged, no duplicate
             with zipfile.ZipFile(p) as z:
                 _safe_extract(z, ex)
+            for f in _audio_files_in(_find_audio_root(ex)):
+                _ingest_file(f)
+        elif p.suffix.lower() == ".rar":
+            ex = Path(tempfile.mkdtemp(prefix="_rar_"))   # outside staged, no duplicate
+            _extract_rar(p, ex)
             for f in _audio_files_in(_find_audio_root(ex)):
                 _ingest_file(f)
         else:
@@ -468,7 +551,7 @@ class Api:
         if mode == "files":
             result = self._window.create_file_dialog(
                 webview.OPEN_DIALOG, allow_multiple=True,
-                file_types=("Stems (*.wav;*.aif;*.aiff;*.zip)", "All files (*.*)"))
+                file_types=("Stems (*.wav;*.aif;*.aiff;*.zip;*.rar)", "All files (*.*)"))
         else:
             result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         return {"ok": bool(result), "paths": list(result) if result else []}
